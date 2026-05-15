@@ -41,9 +41,17 @@ select {
   width: 100vw;
   height: 100svh;
   overflow: hidden;
+  background: linear-gradient(180deg, #050914 0%, #071122 100%);
+}
+
+.game-bg {
+  position: absolute;
+  inset: 0;
   background:
-    radial-gradient(circle at top, rgba(68, 126, 255, 0.25), transparent 38%),
-    linear-gradient(180deg, #0b1020 0%, #04060d 100%);
+    radial-gradient(circle at 20% 20%, rgba(87, 184, 255, 0.18), transparent 22%),
+    radial-gradient(circle at 80% 30%, rgba(124, 255, 175, 0.14), transparent 22%),
+    radial-gradient(circle at 50% 85%, rgba(255, 215, 106, 0.12), transparent 26%),
+    linear-gradient(180deg, rgba(7, 17, 34, 0.92) 0%, rgba(3, 8, 18, 0.96) 100%);
 }
 
 video,
@@ -57,6 +65,10 @@ canvas {
 video {
   opacity: 0;
   pointer-events: none;
+}
+
+#cameraCanvas {
+  opacity: 0.42;
 }
 
 #cameraCanvas,
@@ -73,33 +85,33 @@ video {
   gap: 8px;
 }
 
-.top-left {
-  top: max(16px, env(safe-area-inset-top));
-  left: max(16px, env(safe-area-inset-left));
-  right: 16px;
-  max-width: min(460px, calc(100vw - 32px));
+.compact-hud {
+  max-width: min(52vw, 320px);
 }
 
-.top-center {
-  top: max(16px, env(safe-area-inset-top));
-  left: 50%;
-  transform: translateX(-50%);
-  align-items: center;
+.top-left {
+  top: max(12px, env(safe-area-inset-top));
+  left: max(12px, env(safe-area-inset-left));
 }
 
 .top-right {
-  top: max(16px, env(safe-area-inset-top));
-  right: max(16px, env(safe-area-inset-right));
+  top: max(12px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right));
   align-items: flex-end;
 }
 
-.bottom-left {
-  left: max(16px, env(safe-area-inset-left));
-  bottom: max(16px, env(safe-area-inset-bottom));
+.right-stats {
+  right: max(12px, env(safe-area-inset-right));
+  top: 112px;
 }
 
-.controls {
-  gap: 10px;
+.bottom-left {
+  left: max(12px, env(safe-area-inset-left));
+  bottom: max(12px, env(safe-area-inset-bottom));
+}
+
+.mobile-stack {
+  gap: 8px;
 }
 
 .badge,
@@ -113,9 +125,10 @@ video {
 .intro-chip,
 .score-card,
 .step-item,
-.result-line {
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+.result-line,
+.mini-pill {
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
 }
 
 .badge,
@@ -126,21 +139,23 @@ video {
 .intro-panel,
 .score-card,
 .step-item,
-.result-line {
-  background: rgba(7, 12, 24, 0.58);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.24);
+.result-line,
+.mini-pill {
+  background: rgba(5, 14, 30, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
 }
 
 .badge,
 .status,
 .pill,
-.intro-chip {
+.intro-chip,
+.mini-pill {
   display: inline-flex;
   width: fit-content;
-  padding: 8px 12px;
+  padding: 7px 10px;
   border-radius: 999px;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -149,41 +164,31 @@ video {
 }
 
 .hint {
-  padding: 12px 14px;
-  border-radius: 16px;
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.92);
-}
-
-.pill-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.pill strong {
-  color: #7cffaf;
-  margin-left: 4px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.95);
 }
 
 .start-button,
 .secondary-button {
   border: 0;
   border-radius: 999px;
-  padding: 14px 20px;
+  padding: 12px 16px;
   font-weight: 800;
   letter-spacing: 0.02em;
+  min-width: 88px;
 }
 
 .start-button {
   color: #08101e;
   background: linear-gradient(135deg, #9ee8ff 0%, #7cffaf 100%);
-  box-shadow: 0 10px 30px rgba(108, 255, 185, 0.28);
+  box-shadow: 0 10px 30px rgba(108, 255, 185, 0.35);
 }
 
 .secondary-button {
   color: #f3f7ff;
-  background: rgba(18, 28, 49, 0.8);
+  background: rgba(18, 28, 49, 0.88);
   border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
@@ -235,7 +240,7 @@ video {
 
 .intro-panel p {
   margin: 0;
-  color: rgba(255, 255, 255, 0.92);
+  color: rgba(255, 255, 255, 0.95);
 }
 
 .intro-meta {
@@ -286,24 +291,26 @@ video {
 }
 
 .score-board {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
 }
 
 .score-card {
-  min-width: 86px;
-  padding: 10px 14px;
+  min-width: 92px;
+  padding: 10px 12px;
   border-radius: 18px;
   text-align: center;
 }
 
 .score-card strong {
   display: block;
-  font-size: 24px;
+  font-size: 22px;
   line-height: 1.1;
 }
 
 .score-label {
-  font-size: 12px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.7);
@@ -317,37 +324,70 @@ video {
   color: #ffd76a;
 }
 
+.mini-pill-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mini-pill {
+  justify-content: space-between;
+  width: 100%;
+}
+
+.mini-pill strong {
+  margin-left: 6px;
+  color: #7cffaf;
+}
+
 @media (max-width: 720px) {
-  .top-left {
-    max-width: calc(100vw - 32px);
+  .compact-hud {
+    max-width: calc(100vw - 126px);
   }
 
-  .top-center {
-    top: auto;
-    left: auto;
-    right: max(16px, env(safe-area-inset-right));
-    transform: none;
-    bottom: calc(max(16px, env(safe-area-inset-bottom)) + 82px);
-    align-items: flex-end;
+  .top-left {
+    top: max(10px, env(safe-area-inset-top));
+    left: max(10px, env(safe-area-inset-left));
   }
 
   .top-right {
-    top: auto;
-    right: max(16px, env(safe-area-inset-right));
-    bottom: max(16px, env(safe-area-inset-bottom));
+    top: max(10px, env(safe-area-inset-top));
+    right: max(10px, env(safe-area-inset-right));
   }
 
-  .bottom-left {
-    bottom: calc(max(16px, env(safe-area-inset-bottom)) + 200px);
+  .right-stats {
+    right: max(10px, env(safe-area-inset-right));
+    top: auto;
+    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 78px);
+  }
+
+  .score-card {
+    min-width: 84px;
+    padding: 8px 10px;
+  }
+
+  .score-card strong {
+    font-size: 20px;
+  }
+
+  .hint {
+    font-size: 12px;
+    padding: 9px 10px;
   }
 
   .start-button,
   .secondary-button {
-    padding: 14px 18px;
+    padding: 11px 14px;
+    min-width: 72px;
+    font-size: 13px;
   }
 
   .intro-panel {
     width: min(92vw, 92vw);
     padding: 18px;
+  }
+
+  #cameraCanvas {
+    opacity: 0.24;
   }
 }

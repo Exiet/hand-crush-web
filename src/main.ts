@@ -16,6 +16,11 @@ type Crushable = {
   crushed: boolean
   respawnAt: number
   pulse: number
+  driftAngle: number
+  driftSpeed: number
+  driftRadius: number
+  baseX: number
+  baseY: number
 }
 
 type Particle = {
@@ -45,6 +50,7 @@ type AppRefs = {
   perfText: HTMLSpanElement
   feedbackText: HTMLSpanElement
   installButton: HTMLButtonElement
+  fullscreenButton: HTMLButtonElement
   panelTitle: HTMLHeadingElement
   panelDesc: HTMLParagraphElement
   panelMeta: HTMLParagraphElement
@@ -63,27 +69,29 @@ type DeferredInstallPrompt = Event & {
 }
 
 const SHOW_DEBUG = import.meta.env.DEV
-const COMBO_WINDOW_MS = 1600
+const COMBO_WINDOW_MS = 1800
 const ROUND_DURATION_MS = 30000
+const LOCK_CHARGE_MAX = 1
 
 const app = document.querySelector<HTMLDivElement>('#app')
 if (!app) throw new Error('Missing #app root')
 
 app.innerHTML = `
-  <div class="shell">
+  <div class="shell" id="shellRoot">
+    <div class="game-bg"></div>
     <video id="camera" playsinline muted></video>
     <canvas id="cameraCanvas"></canvas>
     <canvas id="gameCanvas"></canvas>
     <canvas id="overlayCanvas"></canvas>
 
     <div class="intro-panel" id="panel">
-      <div class="intro-chip">Hand Crush Web · 挑战试玩版</div>
-      <h1 id="panelTitle">30 秒内，你能抓爆多少目标？</h1>
-      <p id="panelDesc">点击开始后授权相机，把手掌移到目标上方，快速握拳。倒计时结束后会显示你的成绩。</p>
+      <div class="intro-chip">Hand Crush Web · 上线试玩版</div>
+      <h1 id="panelTitle">锁定目标，轻收手就爆</h1>
+      <p id="panelDesc">目标会自动锁定并持续蓄力。你只要把手掌移近，哪怕只是轻轻收手，也很容易把它捏爆。</p>
       <div class="step-list">
         <div class="step-item"><span>1</span><p>点击开始并允许相机权限</p></div>
-        <div class="step-item"><span>2</span><p>把手掌移到目标上方</p></div>
-        <div class="step-item"><span>3</span><p>快速握拳，尽量打出更高连击</p></div>
+        <div class="step-item"><span>2</span><p>把手掌移到漂浮目标附近</p></div>
+        <div class="step-item"><span>3</span><p>等锁定蓄力涨起来，轻收手就爆</p></div>
       </div>
       <p id="panelMeta" class="intro-meta">推荐：Android Chrome / iPhone Safari · 需要 HTTPS 才能正常调用相机</p>
       <p id="resultScore" class="result-line hidden"></p>
@@ -93,17 +101,19 @@ app.innerHTML = `
       </div>
     </div>
 
-    <div class="hud top-left">
-      <div class="badge">Hand Crush Web · Challenge</div>
+    <div class="hud top-left compact-hud">
+      <div class="badge">Charge Burst</div>
       <div id="statusText" class="status">等待启动</div>
-      <div id="hintText" class="hint">点击开始后授权相机，把手放进画面，握拳抓爆目标。</div>
-      <div class="pill-row">
-        <span class="pill">性能：<strong id="perfText">auto</strong></span>
-        <span class="pill">反馈：<strong id="feedbackText">heavy</strong></span>
-      </div>
+      <div id="hintText" class="hint">靠近目标会自动锁定并蓄力，轻收手就更容易爆。</div>
     </div>
 
-    <div class="hud top-center score-board">
+    <div class="hud top-right controls mobile-stack">
+      <button id="fullscreenButton" class="secondary-button">全屏</button>
+      <button id="installButton" class="secondary-button hidden">安装</button>
+      <button id="startButton" class="start-button">开始</button>
+    </div>
+
+    <div class="hud right-stats score-board mobile-stats">
       <div class="score-card timer-card">
         <span class="score-label">剩余</span>
         <strong id="timerText">30.0</strong>
@@ -116,11 +126,10 @@ app.innerHTML = `
         <span class="score-label">连击</span>
         <strong id="comboText">x0</strong>
       </div>
-    </div>
-
-    <div class="hud top-right controls">
-      <button id="installButton" class="secondary-button hidden">安装到手机</button>
-      <button id="startButton" class="start-button">开始挑战</button>
+      <div class="score-card mini-pill-row">
+        <span class="mini-pill">性能 <strong id="perfText">auto</strong></span>
+        <span class="mini-pill">反馈 <strong id="feedbackText">heavy</strong></span>
+      </div>
     </div>
 
     <div class="hud bottom-left debug-panel ${SHOW_DEBUG ? '' : 'hidden'}">
@@ -141,6 +150,7 @@ const refs: AppRefs = {
   perfText: document.querySelector('#perfText')!,
   feedbackText: document.querySelector('#feedbackText')!,
   installButton: document.querySelector('#installButton')!,
+  fullscreenButton: document.querySelector('#fullscreenButton')!,
   panelTitle: document.querySelector('#panelTitle')!,
   panelDesc: document.querySelector('#panelDesc')!,
   panelMeta: document.querySelector('#panelMeta')!,
@@ -163,7 +173,7 @@ const FINGER_BASES = [2, 5, 9, 13, 17]
 
 let handLandmarker: HandLandmarker | null = null
 let lastVideoTime = -1
-let detectIntervalMs = 45
+let detectIntervalMs = 26
 let lastDetectTs = 0
 let fistScoreSmoothed = 0
 let enterFrames = 0
@@ -190,18 +200,26 @@ let deferredInstallPrompt: DeferredInstallPrompt | null = null
 let frameSamples = 0
 let frameTimeSum = 0
 let runtimeState: RuntimeState = 'idle'
+let lockedTargetId: number | null = null
+let lockCharge = 0
 
 const objects: Crushable[] = []
 const particles: Particle[] = []
 
 const config = {
-  smoothingAlpha: 0.42,
-  enterThreshold: 0.72,
-  holdThreshold: 0.68,
-  exitThreshold: 0.45,
-  minEnterFrames: 3,
+  smoothingAlpha: 0.68,
+  enterThreshold: 0.42,
+  holdThreshold: 0.38,
+  exitThreshold: 0.24,
+  minEnterFrames: 1,
   minExitFrames: 2,
-  particleBurst: 18,
+  particleBurst: 28,
+  hitPadding: 92,
+  lockRadius: 132,
+  easyCrushBoost: 58,
+  chargeRate: 1.9,
+  chargeBoostRate: 3.4,
+  chargeDecay: 1.2,
 }
 
 function resizeCanvases() {
@@ -244,8 +262,16 @@ function updateScoreBoard() {
   refs.timerText.textContent = (roundTimeLeftMs / 1000).toFixed(1)
 }
 
+function updateFullscreenLabel() {
+  refs.fullscreenButton.textContent = document.fullscreenElement ? '退出全屏' : '全屏'
+}
+
 function randomBetween(min: number, max: number) {
   return Math.random() * (max - min) + min
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value))
 }
 
 function detectPlatform() {
@@ -274,14 +300,20 @@ function choosePerformanceTier(): PerformanceTier {
 function applyPerformanceTier(tier: PerformanceTier) {
   performanceTier = tier
   if (tier === 'high') {
-    detectIntervalMs = 33
-    config.particleBurst = 22
+    detectIntervalMs = 22
+    config.particleBurst = 32
+    config.hitPadding = 100
+    config.lockRadius = 146
   } else if (tier === 'medium') {
-    detectIntervalMs = 45
-    config.particleBurst = 16
+    detectIntervalMs = 26
+    config.particleBurst = 28
+    config.hitPadding = 92
+    config.lockRadius = 132
   } else {
-    detectIntervalMs = 66
-    config.particleBurst = 10
+    detectIntervalMs = 36
+    config.particleBurst = 18
+    config.hitPadding = 78
+    config.lockRadius = 110
   }
   refs.perfText.textContent = tier
 }
@@ -295,11 +327,11 @@ function getStartupMeta() {
   const { isiOS, isAndroid, isSafari } = detectPlatform()
   if (isiOS) {
     return isSafari
-      ? '当前环境：iPhone / Safari · 建议添加到主屏幕获得更像 App 的体验'
+      ? '当前环境：iPhone / Safari · 已强化自动锁定与蓄力，移动端更容易触发'
       : '当前环境：iPhone · 建议改用 Safari 打开，兼容性最好'
   }
   if (isAndroid) {
-    return '当前环境：Android · 推荐使用 Chrome，振动与权限体验更稳定'
+    return '当前环境：Android · 推荐使用 Chrome，当前版本已强化傻瓜式捏爆逻辑'
   }
   return '当前环境：桌面或其他浏览器 · 真机测试请用手机 HTTPS 链接打开'
 }
@@ -310,6 +342,8 @@ function resetRoundStats() {
   bestCombo = 0
   comboTimer = 0
   roundTimeLeftMs = ROUND_DURATION_MS
+  lockedTargetId = null
+  lockCharge = 0
   updateScoreBoard()
   refs.resultScore.classList.add('hidden')
   refs.resultCombo.classList.add('hidden')
@@ -317,6 +351,8 @@ function resetRoundStats() {
 
 function finishRound() {
   runtimeState = 'ended'
+  lockedTargetId = null
+  lockCharge = 0
   showPanel(true)
   refs.resultScore.textContent = `本局击碎：${crushCount}`
   refs.resultCombo.textContent = `最高连击：x${bestCombo}`
@@ -324,8 +360,8 @@ function finishRound() {
   refs.resultCombo.classList.remove('hidden')
   updatePanel(
     '挑战结束',
-    '你已经完成本轮 30 秒挑战，可以立刻再来一局，继续刷新成绩。',
-    '把这个链接发给朋友，看看谁的击碎数更高。',
+    '这一版已经尽量做成傻瓜式捏爆：靠近、锁定、蓄力、轻收手就爆。',
+    '如果要上线试玩，这一版已经比较适合直接发链接给别人了。',
     '再来一局',
   )
   refs.startButton.disabled = false
@@ -337,16 +373,25 @@ function finishRound() {
 }
 
 function spawnObject(): Crushable {
-  const margin = 56
+  const margin = 72
+  const hudTop = Math.min(window.innerHeight * 0.24, 180)
+  const hudRight = Math.min(window.innerWidth * 0.23, 120)
+  const baseX = randomBetween(margin, window.innerWidth - margin - hudRight)
+  const baseY = randomBetween(hudTop, window.innerHeight - margin - 90)
   return {
     id: nextObjectId++,
     emoji: EMOJIS[Math.floor(Math.random() * EMOJIS.length)],
-    x: randomBetween(margin, window.innerWidth - margin),
-    y: randomBetween(140, window.innerHeight - margin),
-    radius: randomBetween(28, 42),
+    x: baseX,
+    y: baseY,
+    baseX,
+    baseY,
+    radius: randomBetween(38, 56),
     crushed: false,
     respawnAt: 0,
     pulse: 0,
+    driftAngle: randomBetween(0, Math.PI * 2),
+    driftSpeed: randomBetween(0.45, 0.95),
+    driftRadius: randomBetween(16, 34),
   }
 }
 
@@ -361,13 +406,16 @@ function resetObjects() {
 
 function respawnObject(target: Crushable) {
   const replacement = spawnObject()
-  target.emoji = replacement.emoji
-  target.x = replacement.x
-  target.y = replacement.y
-  target.radius = replacement.radius
-  target.crushed = false
-  target.respawnAt = 0
-  target.pulse = 0
+  Object.assign(target, replacement)
+}
+
+function updateObjectMotion(dt: number) {
+  for (const item of objects) {
+    if (item.crushed) continue
+    item.driftAngle += item.driftSpeed * dt
+    item.x = item.baseX + Math.cos(item.driftAngle) * item.driftRadius
+    item.y = item.baseY + Math.sin(item.driftAngle * 0.8) * item.driftRadius
+  }
 }
 
 function getPalmCenter(landmarks: NormalizedLandmark[]) {
@@ -399,13 +447,13 @@ function computeFistScore(landmarks: NormalizedLandmark[]) {
     const base = landmarks[FINGER_BASES[i]]
     const extend = Math.max(distance(base, palmPoint), 0.0001)
     const fold = distance(tip, palmPoint)
-    const normalized = 1 - Math.min(fold / (extend * 2.2), 1)
+    const normalized = 1 - Math.min(fold / (extend * 3.0), 1)
     return normalized
   })
 
-  const thumbBoost = values[0] * 0.9
+  const thumbBoost = values[0] * 0.55
   const fingerAvg = (values[1] + values[2] + values[3] + values[4]) / 4
-  return Math.max(0, Math.min(1, fingerAvg * 0.82 + thumbBoost * 0.18))
+  return Math.max(0, Math.min(1, fingerAvg * 0.92 + thumbBoost * 0.08))
 }
 
 function updateGestureState(score: number) {
@@ -419,7 +467,7 @@ function updateGestureState(score: number) {
         gestureState = 'FIST_HOLD'
         exitFrames = 0
         justStartedFist = true
-        ringTimer = 120
+        ringTimer = 140
       }
     } else {
       enterFrames = 0
@@ -437,12 +485,18 @@ function updateGestureState(score: number) {
       }
     } else {
       exitFrames = 0
-      if (score > config.holdThreshold) gestureState = 'FIST_HOLD'
     }
   }
 }
 
-function playOscLayer(now: number, type: OscillatorType, startFreq: number, endFreq: number, gainPeak: number, duration: number) {
+function playOscLayer(
+  now: number,
+  type: OscillatorType,
+  startFreq: number,
+  endFreq: number,
+  gainPeak: number,
+  duration: number,
+) {
   if (!audioCtx) return
   const osc = audioCtx.createOscillator()
   const gain = audioCtx.createGain()
@@ -453,10 +507,10 @@ function playOscLayer(now: number, type: OscillatorType, startFreq: number, endF
   osc.frequency.exponentialRampToValueAtTime(endFreq, now + duration)
 
   filter.type = 'lowpass'
-  filter.frequency.setValueAtTime(1800, now)
+  filter.frequency.setValueAtTime(2200, now)
 
   gain.gain.setValueAtTime(0.0001, now)
-  gain.gain.exponentialRampToValueAtTime(gainPeak, now + 0.01)
+  gain.gain.exponentialRampToValueAtTime(gainPeak, now + 0.008)
   gain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
 
   osc.connect(filter)
@@ -466,22 +520,45 @@ function playOscLayer(now: number, type: OscillatorType, startFreq: number, endF
   osc.stop(now + duration + 0.02)
 }
 
+function playNoiseBurst(now: number) {
+  if (!audioCtx) return
+  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.08, audioCtx.sampleRate)
+  const data = buffer.getChannelData(0)
+  for (let i = 0; i < data.length; i += 1) {
+    data[i] = (Math.random() * 2 - 1) * (1 - i / data.length)
+  }
+  const source = audioCtx.createBufferSource()
+  const filter = audioCtx.createBiquadFilter()
+  const gain = audioCtx.createGain()
+  source.buffer = buffer
+  filter.type = 'bandpass'
+  filter.frequency.value = 1400
+  gain.gain.setValueAtTime(0.0001, now)
+  gain.gain.exponentialRampToValueAtTime(0.06, now + 0.01)
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.07)
+  source.connect(filter)
+  filter.connect(gain)
+  gain.connect(audioCtx.destination)
+  source.start(now)
+}
+
 function playCrushSound() {
   if (!audioCtx) return
   const now = audioCtx.currentTime
   const heavy = feedbackIntensity === 'heavy'
 
-  playOscLayer(now, 'triangle', randomBetween(140, 190), randomBetween(58, 80), heavy ? 0.2 : 0.13, 0.15)
-  playOscLayer(now, 'square', randomBetween(230, 320), randomBetween(88, 130), heavy ? 0.12 : 0.08, 0.09)
-  playOscLayer(now + 0.004, 'sawtooth', randomBetween(500, 760), randomBetween(180, 260), heavy ? 0.05 : 0.03, 0.05)
+  playOscLayer(now, 'triangle', randomBetween(150, 200), randomBetween(62, 82), heavy ? 0.24 : 0.15, 0.18)
+  playOscLayer(now, 'square', randomBetween(260, 360), randomBetween(96, 140), heavy ? 0.14 : 0.09, 0.1)
+  playOscLayer(now + 0.002, 'sawtooth', randomBetween(640, 840), randomBetween(180, 260), heavy ? 0.06 : 0.04, 0.06)
+  playNoiseBurst(now + 0.001)
 }
 
 function triggerHaptics() {
   if (typeof navigator.vibrate !== 'function') return
   if (feedbackIntensity === 'heavy') {
-    navigator.vibrate([14, 16, 24])
+    navigator.vibrate([18, 14, 24, 12, 30])
   } else if (feedbackIntensity === 'medium') {
-    navigator.vibrate([12, 14, 18])
+    navigator.vibrate([12, 12, 18])
   } else {
     navigator.vibrate(18)
   }
@@ -491,43 +568,116 @@ function emitCrush(target: Crushable) {
   if (runtimeState !== 'running') return
 
   target.crushed = true
-  target.respawnAt = performance.now() + 650
-  target.pulse = 1
+  target.respawnAt = performance.now() + 480
+  target.pulse = 1.3
   crushCount += 1
   comboCount = comboTimer > 0 ? comboCount + 1 : 1
   bestCombo = Math.max(bestCombo, comboCount)
   comboTimer = COMBO_WINDOW_MS
+  lockedTargetId = null
+  lockCharge = 0
   updateScoreBoard()
 
-  flashTimer = feedbackIntensity === 'heavy' ? 130 : 90
-  shakeTimer = feedbackIntensity === 'heavy' ? 120 : 70
+  flashTimer = feedbackIntensity === 'heavy' ? 160 : 120
+  shakeTimer = feedbackIntensity === 'heavy' ? 150 : 100
   playCrushSound()
   triggerHaptics()
 
   for (let i = 0; i < config.particleBurst; i += 1) {
-    const angle = (Math.PI * 2 * i) / config.particleBurst + randomBetween(-0.25, 0.25)
-    const speed = randomBetween(120, feedbackIntensity === 'heavy' ? 340 : 260)
+    const angle = (Math.PI * 2 * i) / config.particleBurst + randomBetween(-0.32, 0.32)
+    const speed = randomBetween(200, feedbackIntensity === 'heavy' ? 500 : 340)
     particles.push({
       x: target.x,
       y: target.y,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
-      life: randomBetween(0.22, 0.42),
-      maxLife: randomBetween(0.22, 0.42),
-      size: randomBetween(4, 10),
+      life: randomBetween(0.26, 0.52),
+      maxLife: randomBetween(0.26, 0.52),
+      size: randomBetween(5, 13),
       hue: randomBetween(0, 360),
     })
   }
 }
 
+function findLockedTarget(): Crushable | undefined {
+  if (lockedTargetId == null) return undefined
+  return objects.find((item) => item.id === lockedTargetId && !item.crushed)
+}
+
+function updateTargetLock() {
+  if (!grabPoint.visible || runtimeState !== 'running') {
+    lockedTargetId = null
+    return
+  }
+
+  const current = findLockedTarget()
+  if (current) {
+    const currentDist = Math.hypot(current.x - grabPoint.x, current.y - grabPoint.y)
+    if (currentDist <= current.radius + config.lockRadius + 22) {
+      return
+    }
+  }
+
+  let best: Crushable | undefined
+  let bestDist = Number.POSITIVE_INFINITY
+  for (const item of objects) {
+    if (item.crushed) continue
+    const dist = Math.hypot(item.x - grabPoint.x, item.y - grabPoint.y)
+    if (dist < bestDist && dist <= item.radius + config.lockRadius) {
+      best = item
+      bestDist = dist
+    }
+  }
+
+  lockedTargetId = best?.id ?? null
+  if (!best) lockCharge = 0
+}
+
+function updateLockCharge(dt: number) {
+  const locked = findLockedTarget()
+  if (!locked || !grabPoint.visible || runtimeState !== 'running') {
+    lockCharge = Math.max(0, lockCharge - dt * config.chargeDecay)
+    return
+  }
+
+  const dist = Math.hypot(locked.x - grabPoint.x, locked.y - grabPoint.y)
+  const nearRadius = locked.radius + config.lockRadius
+  const closeFactor = clamp(1 - dist / Math.max(nearRadius, 1), 0, 1)
+  const gestureBoost = gestureState === 'FIST_HOLD' || fistScoreSmoothed >= 0.34 ? 1 : 0
+  const chargeRate = config.chargeRate * (0.6 + closeFactor * 0.8) + gestureBoost * config.chargeBoostRate * 0.8
+
+  if (dist <= nearRadius + 18) {
+    lockCharge = clamp(lockCharge + dt * chargeRate, 0, LOCK_CHARGE_MAX)
+  } else {
+    lockCharge = Math.max(0, lockCharge - dt * config.chargeDecay)
+  }
+
+  if (lockCharge >= LOCK_CHARGE_MAX) {
+    emitCrush(locked)
+  }
+}
+
 function detectHit() {
   if (!grabPoint.visible || runtimeState !== 'running') return
+
+  const locked = findLockedTarget()
+  if (locked) {
+    const dist = Math.hypot(locked.x - grabPoint.x, locked.y - grabPoint.y)
+    const easyRadius = locked.radius + config.hitPadding + config.easyCrushBoost
+    if (dist <= easyRadius && (gestureState === 'FIST_HOLD' || fistScoreSmoothed >= 0.42 || lockCharge >= 0.55)) {
+      emitCrush(locked)
+      return
+    }
+  }
+
   const active = objects.find((item) => {
     if (item.crushed) return false
-    return Math.hypot(item.x - grabPoint.x, item.y - grabPoint.y) <= item.radius + 28
+    return Math.hypot(item.x - grabPoint.x, item.y - grabPoint.y) <= item.radius + config.hitPadding
   })
 
-  if (active) emitCrush(active)
+  if (active && (fistScoreSmoothed >= 0.46 || gestureState === 'FIST_HOLD')) {
+    emitCrush(active)
+  }
 }
 
 function drawCameraLayer() {
@@ -542,21 +692,41 @@ function drawCameraLayer() {
   cameraCtx.drawImage(refs.video, 0, 0, w, h)
   cameraCtx.restore()
 
-  cameraCtx.fillStyle = 'rgba(8, 12, 24, 0.32)'
+  cameraCtx.fillStyle = 'rgba(4, 10, 22, 0.5)'
   cameraCtx.fillRect(0, 0, w, h)
+}
+
+function drawBackgroundLayer() {
+  const w = refs.gameCanvas.width
+  const h = refs.gameCanvas.height
+  gameCtx.fillStyle = 'rgba(6, 12, 28, 0.34)'
+  gameCtx.fillRect(0, 0, w, h)
+
+  for (let i = 0; i < 5; i += 1) {
+    const y = 120 + i * 150
+    gameCtx.strokeStyle = `rgba(120, 220, 255, ${0.05 + i * 0.01})`
+    gameCtx.lineWidth = 2
+    gameCtx.beginPath()
+    gameCtx.moveTo(0, y)
+    gameCtx.lineTo(w, y)
+    gameCtx.stroke()
+  }
 }
 
 function drawObjects(dt: number) {
   const now = performance.now()
   gameCtx.clearRect(0, 0, refs.gameCanvas.width, refs.gameCanvas.height)
+  drawBackgroundLayer()
 
   let offsetX = 0
   let offsetY = 0
   if (shakeTimer > 0) {
-    const shakeStrength = feedbackIntensity === 'heavy' ? 8 : 5
+    const shakeStrength = feedbackIntensity === 'heavy' ? 10 : 6
     offsetX = randomBetween(-shakeStrength, shakeStrength)
     offsetY = randomBetween(-shakeStrength, shakeStrength)
   }
+
+  updateObjectMotion(dt)
 
   gameCtx.save()
   gameCtx.translate(offsetX, offsetY)
@@ -567,15 +737,33 @@ function drawObjects(dt: number) {
     }
 
     if (!item.crushed) {
-      item.pulse = Math.max(0, item.pulse - dt * 2.4)
-      const scale = 1 + item.pulse * 0.15
+      item.pulse = Math.max(0, item.pulse - dt * 3.2)
+      const scale = 1 + item.pulse * 0.22
       gameCtx.save()
       gameCtx.translate(item.x, item.y)
       gameCtx.scale(scale, scale)
+
+      const isLocked = item.id === lockedTargetId
+      const near = grabPoint.visible && Math.hypot(item.x - grabPoint.x, item.y - grabPoint.y) <= item.radius + config.hitPadding
       gameCtx.beginPath()
-      gameCtx.fillStyle = 'rgba(255,255,255,0.14)'
-      gameCtx.arc(0, 0, item.radius + 12, 0, Math.PI * 2)
+      gameCtx.fillStyle = isLocked ? 'rgba(255,255,255,0.36)' : near ? 'rgba(255,255,255,0.24)' : 'rgba(255,255,255,0.14)'
+      gameCtx.arc(0, 0, item.radius + 18, 0, Math.PI * 2)
       gameCtx.fill()
+
+      gameCtx.beginPath()
+      gameCtx.strokeStyle = isLocked ? 'rgba(255,215,106,0.98)' : near ? 'rgba(124,255,175,0.9)' : 'rgba(158,232,255,0.35)'
+      gameCtx.lineWidth = isLocked ? 5 : near ? 4 : 2
+      gameCtx.arc(0, 0, item.radius + 12, 0, Math.PI * 2)
+      gameCtx.stroke()
+
+      if (isLocked) {
+        gameCtx.beginPath()
+        gameCtx.strokeStyle = 'rgba(255,215,106,0.55)'
+        gameCtx.lineWidth = 2
+        gameCtx.arc(0, 0, item.radius + 22 + Math.sin(now / 120) * 4, 0, Math.PI * 2)
+        gameCtx.stroke()
+      }
+
       gameCtx.font = `${item.radius * 1.45}px system-ui`
       gameCtx.textAlign = 'center'
       gameCtx.textBaseline = 'middle'
@@ -584,7 +772,7 @@ function drawObjects(dt: number) {
     }
   }
 
-  const maxParticles = performanceTier === 'high' ? 120 : performanceTier === 'medium' ? 72 : 40
+  const maxParticles = performanceTier === 'high' ? 180 : performanceTier === 'medium' ? 104 : 58
   if (particles.length > maxParticles) particles.splice(0, particles.length - maxParticles)
 
   for (let i = particles.length - 1; i >= 0; i -= 1) {
@@ -596,9 +784,9 @@ function drawObjects(dt: number) {
     }
     particle.x += particle.vx * dt
     particle.y += particle.vy * dt
-    particle.vx *= 0.98
-    particle.vy *= 0.98
-    particle.vy += 380 * dt
+    particle.vx *= 0.975
+    particle.vy *= 0.975
+    particle.vy += 420 * dt
 
     const alpha = particle.life / particle.maxLife
     gameCtx.fillStyle = `hsla(${particle.hue} 100% 70% / ${alpha})`
@@ -614,27 +802,48 @@ function drawOverlay() {
   overlayCtx.clearRect(0, 0, refs.overlayCanvas.width, refs.overlayCanvas.height)
 
   if (flashTimer > 0) {
-    overlayCtx.fillStyle = `rgba(255,255,255,${Math.min(flashTimer / 140, 0.34)})`
+    overlayCtx.fillStyle = `rgba(255,255,255,${Math.min(flashTimer / 160, 0.45)})`
     overlayCtx.fillRect(0, 0, refs.overlayCanvas.width, refs.overlayCanvas.height)
+  }
+
+  const locked = findLockedTarget()
+  if (locked) {
+    overlayCtx.beginPath()
+    overlayCtx.strokeStyle = 'rgba(255,215,106,0.6)'
+    overlayCtx.lineWidth = 2
+    overlayCtx.arc(locked.x, locked.y, locked.radius + 30 + Math.sin(performance.now() / 120) * 5, 0, Math.PI * 2)
+    overlayCtx.stroke()
+
+    overlayCtx.beginPath()
+    overlayCtx.strokeStyle = lockCharge >= 0.75 ? 'rgba(255,110,110,0.95)' : 'rgba(124,255,175,0.95)'
+    overlayCtx.lineWidth = 6
+    overlayCtx.arc(
+      locked.x,
+      locked.y,
+      locked.radius + 24,
+      -Math.PI / 2,
+      -Math.PI / 2 + Math.PI * 2 * lockCharge,
+    )
+    overlayCtx.stroke()
   }
 
   if (grabPoint.visible) {
     overlayCtx.save()
     overlayCtx.translate(grabPoint.x, grabPoint.y)
-    overlayCtx.strokeStyle = gestureState === 'FIST_HOLD' ? '#ff7a18' : '#61dafb'
-    overlayCtx.fillStyle = gestureState === 'FIST_HOLD' ? 'rgba(255,122,24,0.22)' : 'rgba(97,218,251,0.16)'
+    overlayCtx.strokeStyle = gestureState === 'FIST_HOLD' ? '#7cffaf' : '#61dafb'
+    overlayCtx.fillStyle = gestureState === 'FIST_HOLD' ? 'rgba(124,255,175,0.28)' : 'rgba(97,218,251,0.16)'
     overlayCtx.lineWidth = 3
     overlayCtx.beginPath()
-    overlayCtx.arc(0, 0, gestureState === 'FIST_HOLD' ? 36 : 28, 0, Math.PI * 2)
+    overlayCtx.arc(0, 0, gestureState === 'FIST_HOLD' ? 42 : 30, 0, Math.PI * 2)
     overlayCtx.fill()
     overlayCtx.stroke()
 
     if (ringTimer > 0) {
-      const t = ringTimer / 120
+      const t = ringTimer / 140
       overlayCtx.beginPath()
-      overlayCtx.strokeStyle = `rgba(255,255,255,${t * 0.6})`
-      overlayCtx.lineWidth = 4 * t
-      overlayCtx.arc(0, 0, 44 + (1 - t) * 34, 0, Math.PI * 2)
+      overlayCtx.strokeStyle = `rgba(255,255,255,${t * 0.7})`
+      overlayCtx.lineWidth = 5 * t
+      overlayCtx.arc(0, 0, 52 + (1 - t) * 42, 0, Math.PI * 2)
       overlayCtx.stroke()
     }
 
@@ -655,6 +864,8 @@ function drawDebug() {
     `gestureState: ${gestureState}`,
     `fistScore: ${fistScoreSmoothed.toFixed(3)}`,
     `handPresent: ${handPresent}`,
+    `lockedTargetId: ${lockedTargetId ?? 'none'}`,
+    `lockCharge: ${lockCharge.toFixed(2)}`,
     `objects: ${objects.filter((item) => !item.crushed).length}`,
     `particles: ${particles.length}`,
     `crushCount: ${crushCount}`,
@@ -662,6 +873,8 @@ function drawDebug() {
     `bestCombo: ${bestCombo}`,
     `timeLeft: ${(roundTimeLeftMs / 1000).toFixed(2)}`,
     `detectIntervalMs: ${detectIntervalMs}`,
+    `hitPadding: ${config.hitPadding}`,
+    `lockRadius: ${config.lockRadius}`,
     `tier: ${performanceTier}`,
     `feedback: ${feedbackIntensity}`,
     `secure: ${isSecureRuntime()}`,
@@ -681,11 +894,13 @@ function processDetection(result: HandLandmarkerResult | null) {
 
   if (!landmarks) {
     grabPoint.visible = false
-    fistScoreSmoothed *= 0.85
+    lockedTargetId = null
+    lockCharge = 0
+    fistScoreSmoothed *= 0.82
     gestureState = 'OPEN'
     enterFrames = 0
     exitFrames = 0
-    if (runtimeState === 'running') updateStatus('未检测到手势')
+    if (runtimeState === 'running') updateStatus('把整只手放进画面里')
     return
   }
 
@@ -695,22 +910,24 @@ function processDetection(result: HandLandmarkerResult | null) {
   grabPoint.y = point.y
   grabPoint.visible = true
 
+  updateTargetLock()
+
   const rawScore = computeFistScore(landmarks)
   fistScoreSmoothed =
     fistScoreSmoothed * (1 - config.smoothingAlpha) + rawScore * config.smoothingAlpha
   updateGestureState(fistScoreSmoothed)
 
-  if (justStartedFist) {
+  if (justStartedFist || gestureState === 'FIST_HOLD' || lockCharge >= 0.55) {
     detectHit()
   }
 
   if (runtimeState === 'running') {
     updateStatus(
-      gestureState === 'FIST_HOLD'
-        ? '已握拳：抓爆中'
-        : gestureState === 'CLOSING'
-          ? '检测到握拳趋势'
-          : '张手待命',
+      lockedTargetId != null
+        ? lockCharge >= 0.8
+          ? '快满了，轻收手就爆！'
+          : '已锁定，蓄力中...'
+        : '把手移到目标附近',
     )
   }
 }
@@ -749,6 +966,19 @@ async function setupCamera() {
 
   refs.video.srcObject = stream
   await refs.video.play()
+}
+
+async function toggleFullscreen() {
+  try {
+    if (!document.fullscreenElement) {
+      await document.documentElement.requestFullscreen()
+    } else {
+      await document.exitFullscreen()
+    }
+  } catch (error) {
+    console.warn('Fullscreen toggle failed', error)
+  }
+  updateFullscreenLabel()
 }
 
 function handleVisibilityChange() {
@@ -821,7 +1051,7 @@ async function startGame() {
 
     setRuntimeState('running')
     updateStatus('挑战开始')
-    updateHint('30 秒内尽量抓爆更多目标，保持节奏冲击更高连击。')
+    updateHint('靠近目标会自动锁定并蓄力，轻收手时蓄力会更快爆满。')
     refs.startButton.textContent = '挑战中'
     refs.panelAction.textContent = '开始挑战'
   } catch (error) {
@@ -857,6 +1087,7 @@ function tick(ts: number) {
     if (roundTimeLeftMs === 0) {
       finishRound()
     }
+    updateLockCharge(dt)
     updateScoreBoard()
   }
 
@@ -899,6 +1130,7 @@ function bindStartActions() {
 }
 
 window.addEventListener('resize', resizeCanvases)
+window.addEventListener('fullscreenchange', updateFullscreenLabel)
 document.addEventListener('visibilitychange', handleVisibilityChange)
 window.addEventListener('beforeinstallprompt', (event) => {
   event.preventDefault()
@@ -910,6 +1142,9 @@ refs.installButton.addEventListener('click', async () => {
   await deferredInstallPrompt.prompt()
   deferredInstallPrompt = null
   refs.installButton.classList.add('hidden')
+})
+refs.fullscreenButton.addEventListener('click', () => {
+  void toggleFullscreen()
 })
 
 if ('serviceWorker' in navigator) {
@@ -924,13 +1159,14 @@ refs.feedbackText.textContent = feedbackIntensity
 resizeCanvases()
 ensureObjects(5)
 updateScoreBoard()
+updateFullscreenLabel()
 updatePanel(
-  '30 秒内，你能抓爆多少目标？',
-  '点击开始后授权相机，把手掌移到目标上方，快速握拳。倒计时结束后会显示你的成绩。',
+  '锁定目标，轻收手就爆',
+  '点击开始后授权相机，把手掌移到目标附近，系统会自动锁定并蓄力，轻轻收手时更容易瞬间爆裂。',
   getStartupMeta(),
   '开始挑战',
 )
-updateHint('这是移动端手势抓爆挑战试玩版。上线后请用 HTTPS 域名分享给手机用户。')
+updateHint('这是移动端手势抓爆上线试玩版。UI 已适配压缩，交互已尽量傻瓜式。')
 updateStatus('等待启动')
 setRuntimeState('idle')
 bindStartActions()
