@@ -68,7 +68,7 @@ video {
 }
 
 #cameraCanvas {
-  opacity: 0.42;
+  opacity: 0.12;
 }
 
 #cameraCanvas,
@@ -388,6 +388,6 @@ video {
   }
 
   #cameraCanvas {
-    opacity: 0.24;
+    opacity: 0.08;
   }
 }

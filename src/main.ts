@@ -37,6 +37,7 @@ type Particle = {
 type PerformanceTier = 'high' | 'medium' | 'low'
 type FeedbackIntensity = 'light' | 'medium' | 'heavy'
 type RuntimeState = 'idle' | 'starting' | 'running' | 'error' | 'ended'
+type CameraFacingMode = 'environment' | 'user'
 
 type AppRefs = {
   video: HTMLVideoElement
@@ -51,6 +52,7 @@ type AppRefs = {
   feedbackText: HTMLSpanElement
   installButton: HTMLButtonElement
   fullscreenButton: HTMLButtonElement
+  switchCameraButton: HTMLButtonElement
   panelTitle: HTMLHeadingElement
   panelDesc: HTMLParagraphElement
   panelMeta: HTMLParagraphElement
@@ -61,6 +63,7 @@ type AppRefs = {
   timerText: HTMLSpanElement
   resultScore: HTMLParagraphElement
   resultCombo: HTMLParagraphElement
+  miniStatsCard: HTMLDivElement
 }
 
 type DeferredInstallPrompt = Event & {
@@ -72,6 +75,7 @@ const SHOW_DEBUG = import.meta.env.DEV
 const COMBO_WINDOW_MS = 1800
 const ROUND_DURATION_MS = 30000
 const LOCK_CHARGE_MAX = 1
+const MAX_OBJECTS = 5
 
 const app = document.querySelector<HTMLDivElement>('#app')
 if (!app) throw new Error('Missing #app root')
@@ -86,12 +90,12 @@ app.innerHTML = `
 
     <div class="intro-panel" id="panel">
       <div class="intro-chip">Hand Crush Web · 上线试玩版</div>
-      <h1 id="panelTitle">锁定目标，轻收手就爆</h1>
-      <p id="panelDesc">目标会自动锁定并持续蓄力。你只要把手掌移近，哪怕只是轻轻收手，也很容易把它捏爆。</p>
+      <h1 id="panelTitle">锁定目标，握住再捏爆</h1>
+      <p id="panelDesc">现在屏幕里会显示你的虚拟游戏手。先靠近目标完成锁定，再明确做抓握动作，才能触发爆裂。</p>
       <div class="step-list">
         <div class="step-item"><span>1</span><p>点击开始并允许相机权限</p></div>
-        <div class="step-item"><span>2</span><p>把手掌移到漂浮目标附近</p></div>
-        <div class="step-item"><span>3</span><p>等锁定蓄力涨起来，轻收手就爆</p></div>
+        <div class="step-item"><span>2</span><p>把虚拟手移到漂浮目标附近</p></div>
+        <div class="step-item"><span>3</span><p>看到锁定后，明确握住再捏爆</p></div>
       </div>
       <p id="panelMeta" class="intro-meta">推荐：Android Chrome / iPhone Safari · 需要 HTTPS 才能正常调用相机</p>
       <p id="resultScore" class="result-line hidden"></p>
@@ -102,12 +106,13 @@ app.innerHTML = `
     </div>
 
     <div class="hud top-left compact-hud">
-      <div class="badge">Charge Burst</div>
+      <div class="badge">Virtual Hand Mode</div>
       <div id="statusText" class="status">等待启动</div>
-      <div id="hintText" class="hint">靠近目标会自动锁定并蓄力，轻收手就更容易爆。</div>
+      <div id="hintText" class="hint">先靠近锁定，再真正握住，才会捏爆目标。</div>
     </div>
 
     <div class="hud top-right controls mobile-stack">
+      <button id="switchCameraButton" class="secondary-button">切后置</button>
       <button id="fullscreenButton" class="secondary-button">全屏</button>
       <button id="installButton" class="secondary-button hidden">安装</button>
       <button id="startButton" class="start-button">开始</button>
@@ -126,7 +131,7 @@ app.innerHTML = `
         <span class="score-label">连击</span>
         <strong id="comboText">x0</strong>
       </div>
-      <div class="score-card mini-pill-row">
+      <div class="score-card mini-pill-row" id="miniStatsCard">
         <span class="mini-pill">性能 <strong id="perfText">auto</strong></span>
         <span class="mini-pill">反馈 <strong id="feedbackText">heavy</strong></span>
       </div>
@@ -151,6 +156,7 @@ const refs: AppRefs = {
   feedbackText: document.querySelector('#feedbackText')!,
   installButton: document.querySelector('#installButton')!,
   fullscreenButton: document.querySelector('#fullscreenButton')!,
+  switchCameraButton: document.querySelector('#switchCameraButton')!,
   panelTitle: document.querySelector('#panelTitle')!,
   panelDesc: document.querySelector('#panelDesc')!,
   panelMeta: document.querySelector('#panelMeta')!,
@@ -161,6 +167,7 @@ const refs: AppRefs = {
   timerText: document.querySelector('#timerText')!,
   resultScore: document.querySelector('#resultScore')!,
   resultCombo: document.querySelector('#resultCombo')!,
+  miniStatsCard: document.querySelector('#miniStatsCard')!,
 }
 
 const cameraCtx = refs.cameraCanvas.getContext('2d')!
@@ -183,6 +190,7 @@ let justStartedFist = false
 let grabPoint = { x: window.innerWidth * 0.5, y: window.innerHeight * 0.5, visible: false }
 let handPresent = false
 let stream: MediaStream | null = null
+let currentFacingMode: CameraFacingMode = 'environment'
 let audioCtx: AudioContext | null = null
 let flashTimer = 0
 let shakeTimer = 0
@@ -207,19 +215,19 @@ const objects: Crushable[] = []
 const particles: Particle[] = []
 
 const config = {
-  smoothingAlpha: 0.68,
-  enterThreshold: 0.42,
-  holdThreshold: 0.38,
-  exitThreshold: 0.24,
-  minEnterFrames: 1,
+  smoothingAlpha: 0.6,
+  enterThreshold: 0.58,
+  holdThreshold: 0.54,
+  exitThreshold: 0.34,
+  minEnterFrames: 2,
   minExitFrames: 2,
   particleBurst: 28,
-  hitPadding: 92,
-  lockRadius: 132,
-  easyCrushBoost: 58,
-  chargeRate: 1.9,
-  chargeBoostRate: 3.4,
-  chargeDecay: 1.2,
+  hitPadding: 84,
+  lockRadius: 126,
+  easyCrushBoost: 24,
+  chargeRate: 1.25,
+  chargeBoostRate: 1.8,
+  chargeDecay: 1.4,
 }
 
 function resizeCanvases() {
@@ -254,6 +262,7 @@ function setRuntimeState(state: RuntimeState) {
   runtimeState = state
   const show = state !== 'running'
   showPanel(show)
+  refs.miniStatsCard.classList.toggle('hidden', state === 'running')
 }
 
 function updateScoreBoard() {
@@ -264,6 +273,10 @@ function updateScoreBoard() {
 
 function updateFullscreenLabel() {
   refs.fullscreenButton.textContent = document.fullscreenElement ? '退出全屏' : '全屏'
+}
+
+function updateCameraButtonLabel() {
+  refs.switchCameraButton.textContent = currentFacingMode === 'environment' ? '切前置' : '切后置'
 }
 
 function randomBetween(min: number, max: number) {
@@ -302,18 +315,18 @@ function applyPerformanceTier(tier: PerformanceTier) {
   if (tier === 'high') {
     detectIntervalMs = 22
     config.particleBurst = 32
-    config.hitPadding = 100
-    config.lockRadius = 146
+    config.hitPadding = 92
+    config.lockRadius = 138
   } else if (tier === 'medium') {
     detectIntervalMs = 26
     config.particleBurst = 28
-    config.hitPadding = 92
-    config.lockRadius = 132
+    config.hitPadding = 84
+    config.lockRadius = 126
   } else {
     detectIntervalMs = 36
     config.particleBurst = 18
-    config.hitPadding = 78
-    config.lockRadius = 110
+    config.hitPadding = 70
+    config.lockRadius = 108
   }
   refs.perfText.textContent = tier
 }
@@ -327,11 +340,11 @@ function getStartupMeta() {
   const { isiOS, isAndroid, isSafari } = detectPlatform()
   if (isiOS) {
     return isSafari
-      ? '当前环境：iPhone / Safari · 已强化自动锁定与蓄力，移动端更容易触发'
+      ? '当前环境：iPhone / Safari · 已强化虚拟手柄与抓握态反馈'
       : '当前环境：iPhone · 建议改用 Safari 打开，兼容性最好'
   }
   if (isAndroid) {
-    return '当前环境：Android · 推荐使用 Chrome，当前版本已强化傻瓜式捏爆逻辑'
+    return '当前环境：Android · 推荐使用 Chrome，当前版本加入了虚拟手柄手'
   }
   return '当前环境：桌面或其他浏览器 · 真机测试请用手机 HTTPS 链接打开'
 }
@@ -360,8 +373,8 @@ function finishRound() {
   refs.resultCombo.classList.remove('hidden')
   updatePanel(
     '挑战结束',
-    '这一版已经尽量做成傻瓜式捏爆：靠近、锁定、蓄力、轻收手就爆。',
-    '如果要上线试玩，这一版已经比较适合直接发链接给别人了。',
+    '这一版需要明确握住后才会捏爆，虚拟手会同步显示你的张手与抓手状态。',
+    '如果要上线试玩，这版更像真正的“虚拟抓取手柄”了。',
     '再来一局',
   )
   refs.startButton.disabled = false
@@ -372,12 +385,30 @@ function finishRound() {
   updateHint('点击“再来一局”重新开始 30 秒挑战。')
 }
 
+function isValidSpawn(baseX: number, baseY: number, radius: number) {
+  return objects.every((item) => {
+    if (item.crushed) return true
+    const dist = Math.hypot(item.baseX - baseX, item.baseY - baseY)
+    return dist >= item.radius + radius + 28
+  })
+}
+
 function spawnObject(): Crushable {
   const margin = 72
   const hudTop = Math.min(window.innerHeight * 0.24, 180)
   const hudRight = Math.min(window.innerWidth * 0.23, 120)
-  const baseX = randomBetween(margin, window.innerWidth - margin - hudRight)
-  const baseY = randomBetween(hudTop, window.innerHeight - margin - 90)
+
+  let attempts = 0
+  let radius = randomBetween(38, 56)
+  let baseX = 0
+  let baseY = 0
+  do {
+    radius = randomBetween(38, 56)
+    baseX = randomBetween(margin, window.innerWidth - margin - hudRight)
+    baseY = randomBetween(hudTop, window.innerHeight - margin - 90)
+    attempts += 1
+  } while (attempts < 50 && !isValidSpawn(baseX, baseY, radius))
+
   return {
     id: nextObjectId++,
     emoji: EMOJIS[Math.floor(Math.random() * EMOJIS.length)],
@@ -385,7 +416,7 @@ function spawnObject(): Crushable {
     y: baseY,
     baseX,
     baseY,
-    radius: randomBetween(38, 56),
+    radius,
     crushed: false,
     respawnAt: 0,
     pulse: 0,
@@ -395,13 +426,13 @@ function spawnObject(): Crushable {
   }
 }
 
-function ensureObjects(count = 5) {
+function ensureObjects(count = MAX_OBJECTS) {
   while (objects.length < count) objects.push(spawnObject())
 }
 
 function resetObjects() {
   objects.length = 0
-  ensureObjects(5)
+  ensureObjects(MAX_OBJECTS)
 }
 
 function respawnObject(target: Crushable) {
@@ -447,13 +478,13 @@ function computeFistScore(landmarks: NormalizedLandmark[]) {
     const base = landmarks[FINGER_BASES[i]]
     const extend = Math.max(distance(base, palmPoint), 0.0001)
     const fold = distance(tip, palmPoint)
-    const normalized = 1 - Math.min(fold / (extend * 3.0), 1)
+    const normalized = 1 - Math.min(fold / (extend * 2.55), 1)
     return normalized
   })
 
-  const thumbBoost = values[0] * 0.55
+  const thumbBoost = values[0] * 0.62
   const fingerAvg = (values[1] + values[2] + values[3] + values[4]) / 4
-  return Math.max(0, Math.min(1, fingerAvg * 0.92 + thumbBoost * 0.08))
+  return Math.max(0, Math.min(1, fingerAvg * 0.88 + thumbBoost * 0.12))
 }
 
 function updateGestureState(score: number) {
@@ -469,6 +500,8 @@ function updateGestureState(score: number) {
         justStartedFist = true
         ringTimer = 140
       }
+    } else if (score > config.holdThreshold) {
+      gestureState = 'CLOSING'
     } else {
       enterFrames = 0
       if (score < config.exitThreshold) gestureState = 'OPEN'
@@ -643,17 +676,13 @@ function updateLockCharge(dt: number) {
   const dist = Math.hypot(locked.x - grabPoint.x, locked.y - grabPoint.y)
   const nearRadius = locked.radius + config.lockRadius
   const closeFactor = clamp(1 - dist / Math.max(nearRadius, 1), 0, 1)
-  const gestureBoost = gestureState === 'FIST_HOLD' || fistScoreSmoothed >= 0.34 ? 1 : 0
-  const chargeRate = config.chargeRate * (0.6 + closeFactor * 0.8) + gestureBoost * config.chargeBoostRate * 0.8
+  const gestureBoost = gestureState === 'FIST_HOLD' ? 1 : 0
+  const chargeRate = config.chargeRate * (0.4 + closeFactor * 0.7) + gestureBoost * config.chargeBoostRate * 0.9
 
   if (dist <= nearRadius + 18) {
     lockCharge = clamp(lockCharge + dt * chargeRate, 0, LOCK_CHARGE_MAX)
   } else {
     lockCharge = Math.max(0, lockCharge - dt * config.chargeDecay)
-  }
-
-  if (lockCharge >= LOCK_CHARGE_MAX) {
-    emitCrush(locked)
   }
 }
 
@@ -664,19 +693,11 @@ function detectHit() {
   if (locked) {
     const dist = Math.hypot(locked.x - grabPoint.x, locked.y - grabPoint.y)
     const easyRadius = locked.radius + config.hitPadding + config.easyCrushBoost
-    if (dist <= easyRadius && (gestureState === 'FIST_HOLD' || fistScoreSmoothed >= 0.42 || lockCharge >= 0.55)) {
+    const readyToCrush = gestureState === 'FIST_HOLD' && lockCharge >= 0.72
+    if (dist <= easyRadius && readyToCrush) {
       emitCrush(locked)
       return
     }
-  }
-
-  const active = objects.find((item) => {
-    if (item.crushed) return false
-    return Math.hypot(item.x - grabPoint.x, item.y - grabPoint.y) <= item.radius + config.hitPadding
-  })
-
-  if (active && (fistScoreSmoothed >= 0.46 || gestureState === 'FIST_HOLD')) {
-    emitCrush(active)
   }
 }
 
@@ -692,14 +713,14 @@ function drawCameraLayer() {
   cameraCtx.drawImage(refs.video, 0, 0, w, h)
   cameraCtx.restore()
 
-  cameraCtx.fillStyle = 'rgba(4, 10, 22, 0.5)'
+  cameraCtx.fillStyle = 'rgba(4, 10, 22, 0.72)'
   cameraCtx.fillRect(0, 0, w, h)
 }
 
 function drawBackgroundLayer() {
   const w = refs.gameCanvas.width
   const h = refs.gameCanvas.height
-  gameCtx.fillStyle = 'rgba(6, 12, 28, 0.34)'
+  gameCtx.fillStyle = 'rgba(6, 12, 28, 0.4)'
   gameCtx.fillRect(0, 0, w, h)
 
   for (let i = 0; i < 5; i += 1) {
@@ -711,6 +732,70 @@ function drawBackgroundLayer() {
     gameCtx.lineTo(w, y)
     gameCtx.stroke()
   }
+}
+
+function drawVirtualHand() {
+  if (!grabPoint.visible) return
+
+  overlayCtx.save()
+  overlayCtx.translate(grabPoint.x, grabPoint.y)
+
+  const grab = gestureState === 'FIST_HOLD'
+  const scale = grab ? 0.92 : 1
+
+  overlayCtx.scale(scale, scale)
+  overlayCtx.fillStyle = 'rgba(255, 214, 173, 0.95)'
+  overlayCtx.strokeStyle = 'rgba(71, 42, 28, 0.7)'
+  overlayCtx.lineWidth = 3
+
+  if (!grab) {
+    overlayCtx.beginPath()
+    overlayCtx.roundRect(-28, 6, 56, 78, 24)
+    overlayCtx.fill()
+    overlayCtx.stroke()
+
+    const fingerXs = [-26, -10, 6, 22]
+    const fingerHeights = [64, 80, 74, 58]
+    fingerXs.forEach((x, index) => {
+      overlayCtx.beginPath()
+      overlayCtx.roundRect(x, -fingerHeights[index], 12, fingerHeights[index] + 18, 10)
+      overlayCtx.fill()
+      overlayCtx.stroke()
+    })
+
+    overlayCtx.save()
+    overlayCtx.translate(-34, 18)
+    overlayCtx.rotate(-0.95)
+    overlayCtx.beginPath()
+    overlayCtx.roundRect(-8, -26, 16, 44, 10)
+    overlayCtx.fill()
+    overlayCtx.stroke()
+    overlayCtx.restore()
+  } else {
+    overlayCtx.beginPath()
+    overlayCtx.arc(0, 28, 34, 0, Math.PI * 2)
+    overlayCtx.fill()
+    overlayCtx.stroke()
+
+    const knuckleXs = [-22, -8, 6, 20]
+    knuckleXs.forEach((x) => {
+      overlayCtx.beginPath()
+      overlayCtx.roundRect(x, -6, 12, 30, 8)
+      overlayCtx.fill()
+      overlayCtx.stroke()
+    })
+
+    overlayCtx.save()
+    overlayCtx.translate(-30, 26)
+    overlayCtx.rotate(-0.7)
+    overlayCtx.beginPath()
+    overlayCtx.roundRect(-8, -18, 16, 34, 8)
+    overlayCtx.fill()
+    overlayCtx.stroke()
+    overlayCtx.restore()
+  }
+
+  overlayCtx.restore()
 }
 
 function drawObjects(dt: number) {
@@ -827,34 +912,7 @@ function drawOverlay() {
     overlayCtx.stroke()
   }
 
-  if (grabPoint.visible) {
-    overlayCtx.save()
-    overlayCtx.translate(grabPoint.x, grabPoint.y)
-    overlayCtx.strokeStyle = gestureState === 'FIST_HOLD' ? '#7cffaf' : '#61dafb'
-    overlayCtx.fillStyle = gestureState === 'FIST_HOLD' ? 'rgba(124,255,175,0.28)' : 'rgba(97,218,251,0.16)'
-    overlayCtx.lineWidth = 3
-    overlayCtx.beginPath()
-    overlayCtx.arc(0, 0, gestureState === 'FIST_HOLD' ? 42 : 30, 0, Math.PI * 2)
-    overlayCtx.fill()
-    overlayCtx.stroke()
-
-    if (ringTimer > 0) {
-      const t = ringTimer / 140
-      overlayCtx.beginPath()
-      overlayCtx.strokeStyle = `rgba(255,255,255,${t * 0.7})`
-      overlayCtx.lineWidth = 5 * t
-      overlayCtx.arc(0, 0, 52 + (1 - t) * 42, 0, Math.PI * 2)
-      overlayCtx.stroke()
-    }
-
-    overlayCtx.beginPath()
-    overlayCtx.moveTo(-18, 0)
-    overlayCtx.lineTo(18, 0)
-    overlayCtx.moveTo(0, -18)
-    overlayCtx.lineTo(0, 18)
-    overlayCtx.stroke()
-    overlayCtx.restore()
-  }
+  drawVirtualHand()
 }
 
 function drawDebug() {
@@ -875,6 +933,7 @@ function drawDebug() {
     `detectIntervalMs: ${detectIntervalMs}`,
     `hitPadding: ${config.hitPadding}`,
     `lockRadius: ${config.lockRadius}`,
+    `facingMode: ${currentFacingMode}`,
     `tier: ${performanceTier}`,
     `feedback: ${feedbackIntensity}`,
     `secure: ${isSecureRuntime()}`,
@@ -917,16 +976,18 @@ function processDetection(result: HandLandmarkerResult | null) {
     fistScoreSmoothed * (1 - config.smoothingAlpha) + rawScore * config.smoothingAlpha
   updateGestureState(fistScoreSmoothed)
 
-  if (justStartedFist || gestureState === 'FIST_HOLD' || lockCharge >= 0.55) {
+  if (justStartedFist || gestureState === 'FIST_HOLD') {
     detectHit()
   }
 
   if (runtimeState === 'running') {
     updateStatus(
       lockedTargetId != null
-        ? lockCharge >= 0.8
-          ? '快满了，轻收手就爆！'
-          : '已锁定，蓄力中...'
+        ? gestureState === 'FIST_HOLD'
+          ? lockCharge >= 0.72
+            ? '握住了，捏爆！'
+            : '保持抓握，继续蓄力'
+          : '已锁定，先握住'
         : '把手移到目标附近',
     )
   }
@@ -949,16 +1010,23 @@ async function setupHandTracking() {
   })
 }
 
+function stopCameraStream() {
+  stream?.getTracks().forEach((track) => track.stop())
+  stream = null
+  refs.video.srcObject = null
+}
+
 async function setupCamera() {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error('当前浏览器不支持 getUserMedia')
   }
 
   updateStatus('请求相机权限...')
+  stopCameraStream()
   stream = await navigator.mediaDevices.getUserMedia({
     audio: false,
     video: {
-      facingMode: 'environment',
+      facingMode: currentFacingMode,
       width: { ideal: 640 },
       height: { ideal: 480 },
     },
@@ -966,6 +1034,19 @@ async function setupCamera() {
 
   refs.video.srcObject = stream
   await refs.video.play()
+}
+
+async function toggleCameraFacingMode() {
+  currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment'
+  updateCameraButtonLabel()
+  try {
+    await setupCamera()
+  } catch (error) {
+    console.error(error)
+    currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment'
+    updateCameraButtonLabel()
+    await setupCamera()
+  }
 }
 
 async function toggleFullscreen() {
@@ -1051,7 +1132,7 @@ async function startGame() {
 
     setRuntimeState('running')
     updateStatus('挑战开始')
-    updateHint('靠近目标会自动锁定并蓄力，轻收手时蓄力会更快爆满。')
+    updateHint('虚拟手会实时显示张手或抓手状态。先锁定，再真正握住目标。')
     refs.startButton.textContent = '挑战中'
     refs.panelAction.textContent = '开始挑战'
   } catch (error) {
@@ -1146,6 +1227,9 @@ refs.installButton.addEventListener('click', async () => {
 refs.fullscreenButton.addEventListener('click', () => {
   void toggleFullscreen()
 })
+refs.switchCameraButton.addEventListener('click', () => {
+  void toggleCameraFacingMode()
+})
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -1157,16 +1241,17 @@ applyPerformanceTier(choosePerformanceTier())
 feedbackIntensity = chooseFeedbackIntensity()
 refs.feedbackText.textContent = feedbackIntensity
 resizeCanvases()
-ensureObjects(5)
+ensureObjects(MAX_OBJECTS)
 updateScoreBoard()
 updateFullscreenLabel()
+updateCameraButtonLabel()
 updatePanel(
-  '锁定目标，轻收手就爆',
-  '点击开始后授权相机，把手掌移到目标附近，系统会自动锁定并蓄力，轻轻收手时更容易瞬间爆裂。',
+  '锁定目标，握住再捏爆',
+  '点击开始后授权相机，屏幕里的虚拟手会实时反映你的张手或抓手。先锁定目标，再明确握住，才能捏爆。',
   getStartupMeta(),
   '开始挑战',
 )
-updateHint('这是移动端手势抓爆上线试玩版。UI 已适配压缩，交互已尽量傻瓜式。')
+updateHint('这是移动端虚拟手柄版。你会看到自己的游戏手，先张手靠近，握住后再爆。')
 updateStatus('等待启动')
 setRuntimeState('idle')
 bindStartActions()
