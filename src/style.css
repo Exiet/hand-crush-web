@@ -2,8 +2,8 @@
   font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color: #f3f7ff;
-  background: #060816;
+  color: #f7fbff;
+  background: #4d75b5;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -22,7 +22,7 @@ body,
   width: 100%;
   min-height: 100%;
   overflow: hidden;
-  background: #060816;
+  background: linear-gradient(180deg, #274a83 0%, #87acd9 100%);
 }
 
 body {
@@ -41,17 +41,17 @@ select {
   width: 100vw;
   height: 100svh;
   overflow: hidden;
-  background: linear-gradient(180deg, #050914 0%, #071122 100%);
+  background: linear-gradient(180deg, #2f4f8c 0%, #86addb 100%);
 }
 
 .game-bg {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at 20% 20%, rgba(87, 184, 255, 0.18), transparent 22%),
-    radial-gradient(circle at 80% 30%, rgba(124, 255, 175, 0.14), transparent 22%),
-    radial-gradient(circle at 50% 85%, rgba(255, 215, 106, 0.12), transparent 26%),
-    linear-gradient(180deg, rgba(7, 17, 34, 0.92) 0%, rgba(3, 8, 18, 0.96) 100%);
+    linear-gradient(180deg, rgba(43, 80, 142, 0.12) 0%, rgba(255, 255, 255, 0.04) 100%),
+    radial-gradient(circle at 20% 24%, rgba(255, 237, 148, 0.24), transparent 16%),
+    radial-gradient(circle at 78% 34%, rgba(255, 255, 255, 0.12), transparent 24%),
+    linear-gradient(180deg, rgba(44, 82, 145, 0.82) 0%, rgba(130, 171, 222, 0.7) 100%);
 }
 
 video,
@@ -68,7 +68,7 @@ video {
 }
 
 #cameraCanvas {
-  opacity: 0.12;
+  opacity: 0.05;
 }
 
 #cameraCanvas,
@@ -141,9 +141,9 @@ video {
 .step-item,
 .result-line,
 .mini-pill {
-  background: rgba(5, 14, 30, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+  background: rgba(26, 47, 87, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow: 0 12px 40px rgba(14, 23, 54, 0.22);
 }
 
 .badge,
@@ -160,7 +160,7 @@ video {
 }
 
 .status {
-  color: #9ee8ff;
+  color: #fff3ab;
 }
 
 .hint {
@@ -245,7 +245,7 @@ video {
 
 .intro-meta {
   font-size: 14px;
-  color: #9ee8ff;
+  color: #fff0b0;
 }
 
 .intro-actions {
@@ -286,7 +286,7 @@ video {
 .result-line {
   padding: 10px 12px;
   border-radius: 16px;
-  color: #7cffaf;
+  color: #ffe98b;
   font-weight: 700;
 }
 
@@ -317,11 +317,11 @@ video {
 }
 
 .score-card.combo strong {
-  color: #7cffaf;
+  color: #ffe78d;
 }
 
 .timer-card strong {
-  color: #ffd76a;
+  color: #fff2ab;
 }
 
 .mini-pill-row {
@@ -337,7 +337,7 @@ video {
 
 .mini-pill strong {
   margin-left: 6px;
-  color: #7cffaf;
+  color: #ffe78d;
 }
 
 @media (max-width: 720px) {

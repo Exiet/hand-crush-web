@@ -73,9 +73,10 @@ type DeferredInstallPrompt = Event & {
 
 const SHOW_DEBUG = import.meta.env.DEV
 const COMBO_WINDOW_MS = 1800
-const ROUND_DURATION_MS = 30000
+const ROUND_DURATION_MS = 60000
 const LOCK_CHARGE_MAX = 1
 const MAX_OBJECTS = 5
+const CRUSH_COOLDOWN_MS = 1000
 
 const app = document.querySelector<HTMLDivElement>('#app')
 if (!app) throw new Error('Missing #app root')
@@ -210,6 +211,8 @@ let frameTimeSum = 0
 let runtimeState: RuntimeState = 'idle'
 let lockedTargetId: number | null = null
 let lockCharge = 0
+let lastCrushAt = -CRUSH_COOLDOWN_MS
+let fistReleasedSinceLastCrush = true
 
 const objects: Crushable[] = []
 const particles: Particle[] = []
@@ -357,6 +360,8 @@ function resetRoundStats() {
   roundTimeLeftMs = ROUND_DURATION_MS
   lockedTargetId = null
   lockCharge = 0
+  lastCrushAt = -CRUSH_COOLDOWN_MS
+  fistReleasedSinceLastCrush = true
   updateScoreBoard()
   refs.resultScore.classList.add('hidden')
   refs.resultCombo.classList.add('hidden')
@@ -382,7 +387,7 @@ function finishRound() {
   refs.startButton.textContent = '重新开始'
   refs.panelAction.textContent = '再来一局'
   updateStatus('挑战结束')
-  updateHint('点击“再来一局”重新开始 30 秒挑战。')
+  updateHint('点击“再来一局”重新开始 60 秒挑战。')
 }
 
 function isValidSpawn(baseX: number, baseY: number, radius: number) {
@@ -504,7 +509,10 @@ function updateGestureState(score: number) {
       gestureState = 'CLOSING'
     } else {
       enterFrames = 0
-      if (score < config.exitThreshold) gestureState = 'OPEN'
+      if (score < config.exitThreshold) {
+        gestureState = 'OPEN'
+        fistReleasedSinceLastCrush = true
+      }
     }
   }
 
@@ -515,6 +523,7 @@ function updateGestureState(score: number) {
         gestureState = 'OPEN'
         enterFrames = 0
         exitFrames = 0
+        fistReleasedSinceLastCrush = true
       }
     } else {
       exitFrames = 0
@@ -580,10 +589,12 @@ function playCrushSound() {
   const now = audioCtx.currentTime
   const heavy = feedbackIntensity === 'heavy'
 
-  playOscLayer(now, 'triangle', randomBetween(150, 200), randomBetween(62, 82), heavy ? 0.24 : 0.15, 0.18)
-  playOscLayer(now, 'square', randomBetween(260, 360), randomBetween(96, 140), heavy ? 0.14 : 0.09, 0.1)
-  playOscLayer(now + 0.002, 'sawtooth', randomBetween(640, 840), randomBetween(180, 260), heavy ? 0.06 : 0.04, 0.06)
-  playNoiseBurst(now + 0.001)
+  playOscLayer(now, 'triangle', randomBetween(132, 156), randomBetween(52, 68), heavy ? 0.28 : 0.18, 0.24)
+  playOscLayer(now + 0.004, 'square', randomBetween(220, 280), randomBetween(88, 120), heavy ? 0.16 : 0.11, 0.16)
+  playOscLayer(now + 0.008, 'sawtooth', randomBetween(520, 660), randomBetween(170, 230), heavy ? 0.08 : 0.05, 0.1)
+  playOscLayer(now + 0.014, 'triangle', randomBetween(760, 920), randomBetween(240, 320), heavy ? 0.05 : 0.03, 0.08)
+  playNoiseBurst(now + 0.002)
+  playNoiseBurst(now + 0.028)
 }
 
 function triggerHaptics() {
@@ -690,14 +701,19 @@ function detectHit() {
   if (!grabPoint.visible || runtimeState !== 'running') return
 
   const locked = findLockedTarget()
-  if (locked) {
-    const dist = Math.hypot(locked.x - grabPoint.x, locked.y - grabPoint.y)
-    const easyRadius = locked.radius + config.hitPadding + config.easyCrushBoost
-    const readyToCrush = gestureState === 'FIST_HOLD' && lockCharge >= 0.72
-    if (dist <= easyRadius && readyToCrush) {
-      emitCrush(locked)
-      return
-    }
+  if (!locked) return
+
+  const now = performance.now()
+  const dist = Math.hypot(locked.x - grabPoint.x, locked.y - grabPoint.y)
+  const easyRadius = locked.radius + config.hitPadding + config.easyCrushBoost
+  const cooldownReady = now - lastCrushAt >= CRUSH_COOLDOWN_MS
+  const canTriggerThisFist = justStartedFist && fistReleasedSinceLastCrush && cooldownReady
+  const readyToCrush = gestureState === 'FIST_HOLD' && lockCharge >= 0.72
+
+  if (dist <= easyRadius && readyToCrush && canTriggerThisFist) {
+    lastCrushAt = now
+    fistReleasedSinceLastCrush = false
+    emitCrush(locked)
   }
 }
 
@@ -720,18 +736,26 @@ function drawCameraLayer() {
 function drawBackgroundLayer() {
   const w = refs.gameCanvas.width
   const h = refs.gameCanvas.height
-  gameCtx.fillStyle = 'rgba(6, 12, 28, 0.4)'
+
+  const sky = gameCtx.createLinearGradient(0, 0, 0, h)
+  sky.addColorStop(0, 'rgba(49, 85, 150, 0.14)')
+  sky.addColorStop(0.55, 'rgba(108, 150, 213, 0.08)')
+  sky.addColorStop(1, 'rgba(255, 234, 164, 0.08)')
+  gameCtx.fillStyle = sky
   gameCtx.fillRect(0, 0, w, h)
 
-  for (let i = 0; i < 5; i += 1) {
-    const y = 120 + i * 150
-    gameCtx.strokeStyle = `rgba(120, 220, 255, ${0.05 + i * 0.01})`
-    gameCtx.lineWidth = 2
+  for (let i = 0; i < 90; i += 1) {
+    const x = ((i * 173) % 997) / 997 * w
+    const y = ((i * 97) % 541) / 541 * h * 0.72
+    const size = i % 7 === 0 ? 2.3 : 1.2
+    gameCtx.fillStyle = i % 7 === 0 ? 'rgba(255, 210, 101, 0.82)' : 'rgba(255,255,255,0.82)'
     gameCtx.beginPath()
-    gameCtx.moveTo(0, y)
-    gameCtx.lineTo(w, y)
-    gameCtx.stroke()
+    gameCtx.arc(x, y, size, 0, Math.PI * 2)
+    gameCtx.fill()
   }
+
+  gameCtx.fillStyle = 'rgba(134, 183, 97, 0.18)'
+  gameCtx.fillRect(0, h * 0.8, w, h * 0.2)
 }
 
 function drawVirtualHand() {
@@ -741,58 +765,87 @@ function drawVirtualHand() {
   overlayCtx.translate(grabPoint.x, grabPoint.y)
 
   const grab = gestureState === 'FIST_HOLD'
-  const scale = grab ? 0.92 : 1
-
+  const scale = grab ? 0.94 : 1
   overlayCtx.scale(scale, scale)
-  overlayCtx.fillStyle = 'rgba(255, 214, 173, 0.95)'
-  overlayCtx.strokeStyle = 'rgba(71, 42, 28, 0.7)'
-  overlayCtx.lineWidth = 3
+
+  overlayCtx.shadowColor = 'rgba(78, 49, 20, 0.28)'
+  overlayCtx.shadowBlur = 18
+  overlayCtx.shadowOffsetY = 8
+
+  const skin = '#f4c38c'
+  const shade = '#dca66f'
+  const line = '#8f6038'
+  const nail = '#ffe0bf'
 
   if (!grab) {
+    overlayCtx.fillStyle = skin
+    overlayCtx.strokeStyle = line
+    overlayCtx.lineWidth = 4
+
     overlayCtx.beginPath()
-    overlayCtx.roundRect(-28, 6, 56, 78, 24)
+    overlayCtx.roundRect(-30, -12, 60, 94, 24)
     overlayCtx.fill()
     overlayCtx.stroke()
 
     const fingerXs = [-26, -10, 6, 22]
-    const fingerHeights = [64, 80, 74, 58]
+    const fingerHeights = [68, 84, 79, 62]
     fingerXs.forEach((x, index) => {
       overlayCtx.beginPath()
-      overlayCtx.roundRect(x, -fingerHeights[index], 12, fingerHeights[index] + 18, 10)
+      overlayCtx.roundRect(x, -fingerHeights[index], 13, fingerHeights[index] + 28, 12)
       overlayCtx.fill()
       overlayCtx.stroke()
     })
 
     overlayCtx.save()
-    overlayCtx.translate(-34, 18)
-    overlayCtx.rotate(-0.95)
+    overlayCtx.translate(-34, 14)
+    overlayCtx.rotate(-0.85)
     overlayCtx.beginPath()
-    overlayCtx.roundRect(-8, -26, 16, 44, 10)
+    overlayCtx.roundRect(-9, -28, 18, 48, 12)
     overlayCtx.fill()
     overlayCtx.stroke()
     overlayCtx.restore()
-  } else {
-    overlayCtx.beginPath()
-    overlayCtx.arc(0, 28, 34, 0, Math.PI * 2)
-    overlayCtx.fill()
-    overlayCtx.stroke()
 
-    const knuckleXs = [-22, -8, 6, 20]
-    knuckleXs.forEach((x) => {
+    overlayCtx.fillStyle = shade
+    overlayCtx.beginPath()
+    overlayCtx.roundRect(-24, 12, 48, 56, 18)
+    overlayCtx.fill()
+
+    overlayCtx.fillStyle = nail
+    ;[-25, -9, 7, 23].forEach((x, index) => {
       overlayCtx.beginPath()
-      overlayCtx.roundRect(x, -6, 12, 30, 8)
+      overlayCtx.roundRect(x, -fingerHeights[index] + 2, 11, 11, 8)
+      overlayCtx.fill()
+    })
+  } else {
+    overlayCtx.fillStyle = skin
+    overlayCtx.strokeStyle = line
+    overlayCtx.lineWidth = 4
+
+    overlayCtx.beginPath()
+    overlayCtx.roundRect(-34, -2, 68, 74, 28)
+    overlayCtx.fill()
+    overlayCtx.stroke()
+
+    ;[-25, -9, 7, 23].forEach((x) => {
+      overlayCtx.beginPath()
+      overlayCtx.roundRect(x, -20, 14, 30, 10)
       overlayCtx.fill()
       overlayCtx.stroke()
     })
 
     overlayCtx.save()
-    overlayCtx.translate(-30, 26)
-    overlayCtx.rotate(-0.7)
+    overlayCtx.translate(-34, 22)
+    overlayCtx.rotate(-0.72)
     overlayCtx.beginPath()
-    overlayCtx.roundRect(-8, -18, 16, 34, 8)
+    overlayCtx.roundRect(-9, -18, 18, 34, 10)
     overlayCtx.fill()
     overlayCtx.stroke()
     overlayCtx.restore()
+
+    overlayCtx.fillStyle = shade
+    overlayCtx.beginPath()
+    overlayCtx.roundRect(-24, 18, 48, 34, 16)
+    overlayCtx.fill()
   }
 
   overlayCtx.restore()
@@ -976,18 +1029,23 @@ function processDetection(result: HandLandmarkerResult | null) {
     fistScoreSmoothed * (1 - config.smoothingAlpha) + rawScore * config.smoothingAlpha
   updateGestureState(fistScoreSmoothed)
 
-  if (justStartedFist || gestureState === 'FIST_HOLD') {
+  if (justStartedFist) {
     detectHit()
   }
 
   if (runtimeState === 'running') {
+    const cooldownLeft = Math.max(0, CRUSH_COOLDOWN_MS - (performance.now() - lastCrushAt))
     updateStatus(
       lockedTargetId != null
         ? gestureState === 'FIST_HOLD'
-          ? lockCharge >= 0.72
-            ? '握住了，捏爆！'
-            : '保持抓握，继续蓄力'
-          : '已锁定，先握住'
+          ? !fistReleasedSinceLastCrush
+            ? cooldownLeft > 0
+              ? `命中成功，冷却 ${(cooldownLeft / 1000).toFixed(1)}s，先松手再握`
+              : '先松手，再重新握拳触发下一次'
+            : lockCharge >= 0.72
+              ? '重新握拳可捏爆目标'
+              : '保持锁定，准备握拳'
+          : '已锁定，重新握拳才触发'
         : '把手移到目标附近',
     )
   }
@@ -1132,7 +1190,7 @@ async function startGame() {
 
     setRuntimeState('running')
     updateStatus('挑战开始')
-    updateHint('虚拟手会实时显示张手或抓手状态。先锁定，再真正握住目标。')
+    updateHint('只有重新握拳命中目标才会销毁；两次触发间隔 1 秒。')
     refs.startButton.textContent = '挑战中'
     refs.panelAction.textContent = '开始挑战'
   } catch (error) {
@@ -1246,12 +1304,12 @@ updateScoreBoard()
 updateFullscreenLabel()
 updateCameraButtonLabel()
 updatePanel(
-  '锁定目标，握住再捏爆',
-  '点击开始后授权相机，屏幕里的虚拟手会实时反映你的张手或抓手。先锁定目标，再明确握住，才能捏爆。',
+  '锁定目标，重新握拳再捏爆',
+  '点击开始后授权相机，屏幕里的虚拟手会实时反映你的张手或抓手。先锁定目标，再重新握拳，才能触发一次捏爆。',
   getStartupMeta(),
   '开始挑战',
 )
-updateHint('这是移动端虚拟手柄版。你会看到自己的游戏手，先张手靠近，握住后再爆。')
+updateHint('这是移动端虚拟手柄版。必须先锁定目标，再重新握拳，且两次触发间隔 1 秒。')
 updateStatus('等待启动')
 setRuntimeState('idle')
 bindStartActions()
