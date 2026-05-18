@@ -442,14 +442,15 @@ function finishRound() {
 
 function getDeviceFruitScale() {
   const shortSide = Math.min(window.innerWidth, window.innerHeight)
-  if (shortSide <= 430) return 0.52
-  if (shortSide <= 540) return 0.68
-  return 1
+  if (shortSide <= 430) return 0.28
+  if (shortSide <= 540) return 0.4
+  if (shortSide <= 768) return 0.62
+  return 0.82
 }
 
 function getWorldFromScreen(baseX: number, baseY: number, baseZ: number) {
-  const x = ((baseX / window.innerWidth) * 2 - 1) * 7.2
-  const y = (1 - (baseY / window.innerHeight) * 2) * 4.1
+  const x = ((baseX / window.innerWidth) * 2 - 1) * 5.4
+  const y = (1 - (baseY / window.innerHeight) * 2) * 3.2
   return { x, y, z: baseZ }
 }
 
@@ -465,7 +466,7 @@ function createFruitVisual(spriteIndex: number, radius: number) {
   const scale = getDeviceFruitScale()
   return threeScene.createFruit(
     fruitTextures[spriteIndex],
-    radius * 0.072 * scale,
+    radius * 0.038 * scale,
     JUICE_COLORS[spriteIndex % JUICE_COLORS.length],
     spriteIndex,
   )
@@ -473,15 +474,15 @@ function createFruitVisual(spriteIndex: number, radius: number) {
 
 function spawnObject(): Crushable {
   const deviceScale = getDeviceFruitScale()
-  const margin = 78
-  const hudTop = Math.min(window.innerHeight * 0.22, 168)
-  const hudRight = Math.min(window.innerWidth * 0.2, 108)
+  const margin = 54
+  const hudTop = Math.min(window.innerHeight * 0.18, 132)
+  const hudRight = Math.min(window.innerWidth * 0.16, 88)
   let attempts = 0
-  let radius = randomBetween(38, 56) * deviceScale
+  let radius = randomBetween(24, 34) * deviceScale
   let baseX = 0
   let baseY = 0
   do {
-    radius = randomBetween(38, 56) * deviceScale
+    radius = randomBetween(24, 34) * deviceScale
     baseX = randomBetween(margin, window.innerWidth - margin - hudRight)
     baseY = randomBetween(hudTop, window.innerHeight - margin - 110)
     attempts += 1
@@ -503,7 +504,7 @@ function spawnObject(): Crushable {
     pulse: 0,
     driftAngle: randomBetween(0, Math.PI * 2),
     driftSpeed: randomBetween(0.2, 0.45),
-    driftRadius: randomBetween(14, 26),
+    driftRadius: randomBetween(10, 18),
     baseX,
     baseY,
     baseZ,
@@ -591,7 +592,7 @@ function syncObjectVisual(item: Crushable, now: number) {
   const screen = threeScene.projectToScreen(item.visual.group.position)
   item.screenX = screen.x
   item.screenY = screen.y
-  item.screenRadius = item.radius * (0.88 + (1.2 - item.z) * 0.024)
+  item.screenRadius = item.radius * (0.48 + (0.8 - item.z) * 0.012)
 }
 
 function updateObjectMotion(dt: number) {
