@@ -440,9 +440,16 @@ function finishRound() {
   updateHint('点击“再来一局”重新开始 60 秒挑战。')
 }
 
+function getDeviceFruitScale() {
+  const shortSide = Math.min(window.innerWidth, window.innerHeight)
+  if (shortSide <= 430) return 0.52
+  if (shortSide <= 540) return 0.68
+  return 1
+}
+
 function getWorldFromScreen(baseX: number, baseY: number, baseZ: number) {
-  const x = ((baseX / window.innerWidth) * 2 - 1) * 8.2
-  const y = (1 - (baseY / window.innerHeight) * 2) * 4.6
+  const x = ((baseX / window.innerWidth) * 2 - 1) * 7.2
+  const y = (1 - (baseY / window.innerHeight) * 2) * 4.1
   return { x, y, z: baseZ }
 }
 
@@ -455,24 +462,26 @@ function isValidSpawn(baseX: number, baseY: number, radius: number) {
 }
 
 function createFruitVisual(spriteIndex: number, radius: number) {
+  const scale = getDeviceFruitScale()
   return threeScene.createFruit(
     fruitTextures[spriteIndex],
-    radius * 0.12,
+    radius * 0.072 * scale,
     JUICE_COLORS[spriteIndex % JUICE_COLORS.length],
     spriteIndex,
   )
 }
 
 function spawnObject(): Crushable {
-  const margin = 92
-  const hudTop = Math.min(window.innerHeight * 0.24, 190)
-  const hudRight = Math.min(window.innerWidth * 0.24, 126)
+  const deviceScale = getDeviceFruitScale()
+  const margin = 78
+  const hudTop = Math.min(window.innerHeight * 0.22, 168)
+  const hudRight = Math.min(window.innerWidth * 0.2, 108)
   let attempts = 0
-  let radius = randomBetween(60, 82)
+  let radius = randomBetween(38, 56) * deviceScale
   let baseX = 0
   let baseY = 0
   do {
-    radius = randomBetween(60, 82)
+    radius = randomBetween(38, 56) * deviceScale
     baseX = randomBetween(margin, window.innerWidth - margin - hudRight)
     baseY = randomBetween(hudTop, window.innerHeight - margin - 110)
     attempts += 1
@@ -582,7 +591,7 @@ function syncObjectVisual(item: Crushable, now: number) {
   const screen = threeScene.projectToScreen(item.visual.group.position)
   item.screenX = screen.x
   item.screenY = screen.y
-  item.screenRadius = item.radius * (1.15 + (1.4 - item.z) * 0.035)
+  item.screenRadius = item.radius * (0.88 + (1.2 - item.z) * 0.024)
 }
 
 function updateObjectMotion(dt: number) {
@@ -877,7 +886,7 @@ function detectHit() {
   if (!locked) return
   const now = performance.now()
   const dist = Math.hypot(locked.screenX - grabPoint.x, locked.screenY - grabPoint.y)
-  const easyRadius = locked.screenRadius + config.hitPadding + config.easyCrushBoost + 34
+  const easyRadius = locked.screenRadius + config.hitPadding + config.easyCrushBoost + 20
   const cooldownReady = now - lastCrushAt >= CRUSH_COOLDOWN_MS
   const fistIntentActive = justStartedFist || (now - lastFistStartAt <= config.fistIntentBufferMs)
   const canTriggerThisFist = fistIntentActive && fistReleasedSinceLastCrush && cooldownReady

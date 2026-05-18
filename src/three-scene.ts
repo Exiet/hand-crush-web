@@ -33,8 +33,8 @@ export function createThreeFruitScene(canvas: HTMLCanvasElement): ThreeFruitScen
   renderer.setClearColor(0x000000, 0)
 
   const scene = new THREE.Scene()
-  const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100)
-  camera.position.set(0, 0, 18)
+  const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100)
+  camera.position.set(0, 0, 22)
 
   const ambient = new THREE.AmbientLight(0xffffff, 1.45)
   scene.add(ambient)
