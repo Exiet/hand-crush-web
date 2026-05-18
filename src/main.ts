@@ -7,12 +7,18 @@ import {
 } from '@mediapipe/tasks-vision'
 
 type GestureState = 'OPEN' | 'CLOSING' | 'FIST_HOLD'
+type PerformanceTier = 'high' | 'medium' | 'low'
+type FeedbackIntensity = 'light' | 'medium' | 'heavy'
+type RuntimeState = 'idle' | 'starting' | 'running' | 'error' | 'ended'
+type CameraFacingMode = 'environment' | 'user'
+
 type Crushable = {
   id: number
-  emoji: string
+  spriteIndex: number
   x: number
   y: number
   radius: number
+  depth: number
   crushed: boolean
   respawnAt: number
   pulse: number
@@ -21,8 +27,15 @@ type Crushable = {
   driftRadius: number
   baseX: number
   baseY: number
+  roll: number
+  rollSpeed: number
+  yaw: number
+  yawSpeed: number
+  tilt: number
+  tiltSpeed: number
 }
 
+type ParticleKind = 'juice' | 'pulp' | 'screen'
 type Particle = {
   x: number
   y: number
@@ -32,12 +45,13 @@ type Particle = {
   maxLife: number
   size: number
   hue: number
+  alpha: number
+  kind: ParticleKind
+  stretch: number
+  gravity: number
+  spin: number
+  rotation: number
 }
-
-type PerformanceTier = 'high' | 'medium' | 'low'
-type FeedbackIntensity = 'light' | 'medium' | 'heavy'
-type RuntimeState = 'idle' | 'starting' | 'running' | 'error' | 'ended'
-type CameraFacingMode = 'environment' | 'user'
 
 type AppRefs = {
   video: HTMLVideoElement
@@ -77,6 +91,14 @@ const ROUND_DURATION_MS = 60000
 const LOCK_CHARGE_MAX = 1
 const MAX_OBJECTS = 5
 const CRUSH_COOLDOWN_MS = 1000
+const BACKGROUND_SRC = '/assets/background.png'
+const FRUIT_SOURCES = [
+  '/assets/fruit-1.png',
+  '/assets/fruit-2.png',
+  '/assets/fruit-3.png',
+  '/assets/fruit-4.png',
+  '/assets/fruit-5.png',
+]
 
 const app = document.querySelector<HTMLDivElement>('#app')
 if (!app) throw new Error('Missing #app root')
@@ -91,12 +113,12 @@ app.innerHTML = `
 
     <div class="intro-panel" id="panel">
       <div class="intro-chip">Hand Crush Web · 上线试玩版</div>
-      <h1 id="panelTitle">锁定目标，握住再捏爆</h1>
+      <h1 id="panelTitle">锁定目标，重新握拳再捏爆</h1>
       <p id="panelDesc">现在屏幕里会显示你的虚拟游戏手。先靠近目标完成锁定，再明确做抓握动作，才能触发爆裂。</p>
       <div class="step-list">
         <div class="step-item"><span>1</span><p>点击开始并允许相机权限</p></div>
-        <div class="step-item"><span>2</span><p>把虚拟手移到漂浮目标附近</p></div>
-        <div class="step-item"><span>3</span><p>看到锁定后，明确握住再捏爆</p></div>
+        <div class="step-item"><span>2</span><p>把虚拟手移到翻滚水果附近</p></div>
+        <div class="step-item"><span>3</span><p>看到锁定后，重新握拳一次捏爆它</p></div>
       </div>
       <p id="panelMeta" class="intro-meta">推荐：Android Chrome / iPhone Safari · 需要 HTTPS 才能正常调用相机</p>
       <p id="resultScore" class="result-line hidden"></p>
@@ -109,7 +131,7 @@ app.innerHTML = `
     <div class="hud top-left compact-hud">
       <div class="badge">Virtual Hand Mode</div>
       <div id="statusText" class="status">等待启动</div>
-      <div id="hintText" class="hint">先靠近锁定，再真正握住，才会捏爆目标。</div>
+      <div id="hintText" class="hint">先锁定目标，再重新握拳，才会捏爆水果。</div>
     </div>
 
     <div class="hud top-right controls mobile-stack">
@@ -122,7 +144,7 @@ app.innerHTML = `
     <div class="hud right-stats score-board mobile-stats">
       <div class="score-card timer-card">
         <span class="score-label">剩余</span>
-        <strong id="timerText">30.0</strong>
+        <strong id="timerText">60.0</strong>
       </div>
       <div class="score-card">
         <span class="score-label">击碎</span>
@@ -175,9 +197,15 @@ const cameraCtx = refs.cameraCanvas.getContext('2d')!
 const gameCtx = refs.gameCanvas.getContext('2d')!
 const overlayCtx = refs.overlayCanvas.getContext('2d')!
 
-const EMOJIS = ['🍎', '💎', '🧊', '🥝', '🍋', '⭐', '🫐', '🥥']
 const FINGER_TIPS = [4, 8, 12, 16, 20]
 const FINGER_BASES = [2, 5, 9, 13, 17]
+const fruitImages = FRUIT_SOURCES.map((src) => {
+  const image = new Image()
+  image.src = src
+  return image
+})
+const backgroundImage = new Image()
+backgroundImage.src = BACKGROUND_SRC
 
 let handLandmarker: HandLandmarker | null = null
 let lastVideoTime = -1
@@ -193,9 +221,9 @@ let handPresent = false
 let stream: MediaStream | null = null
 let currentFacingMode: CameraFacingMode = 'environment'
 let audioCtx: AudioContext | null = null
+let masterCompression: DynamicsCompressorNode | null = null
 let flashTimer = 0
 let shakeTimer = 0
-let ringTimer = 0
 let comboTimer = 0
 let roundTimeLeftMs = ROUND_DURATION_MS
 let lastFrameTs = performance.now()
@@ -224,10 +252,10 @@ const config = {
   exitThreshold: 0.34,
   minEnterFrames: 2,
   minExitFrames: 2,
-  particleBurst: 28,
+  particleBurst: 44,
   hitPadding: 84,
   lockRadius: 126,
-  easyCrushBoost: 24,
+  easyCrushBoost: 20,
   chargeRate: 1.25,
   chargeBoostRate: 1.8,
   chargeDecay: 1.4,
@@ -263,8 +291,7 @@ function showPanel(show: boolean) {
 
 function setRuntimeState(state: RuntimeState) {
   runtimeState = state
-  const show = state !== 'running'
-  showPanel(show)
+  showPanel(state !== 'running')
   refs.miniStatsCard.classList.toggle('hidden', state === 'running')
 }
 
@@ -317,18 +344,18 @@ function applyPerformanceTier(tier: PerformanceTier) {
   performanceTier = tier
   if (tier === 'high') {
     detectIntervalMs = 22
-    config.particleBurst = 32
+    config.particleBurst = 52
     config.hitPadding = 92
     config.lockRadius = 138
   } else if (tier === 'medium') {
     detectIntervalMs = 26
-    config.particleBurst = 28
+    config.particleBurst = 44
     config.hitPadding = 84
     config.lockRadius = 126
   } else {
     detectIntervalMs = 36
-    config.particleBurst = 18
-    config.hitPadding = 70
+    config.particleBurst = 26
+    config.hitPadding = 72
     config.lockRadius = 108
   }
   refs.perfText.textContent = tier
@@ -343,11 +370,11 @@ function getStartupMeta() {
   const { isiOS, isAndroid, isSafari } = detectPlatform()
   if (isiOS) {
     return isSafari
-      ? '当前环境：iPhone / Safari · 已强化虚拟手柄与抓握态反馈'
+      ? '当前环境：iPhone / Safari · 已强化虚拟手、果汁飞溅与分层音效反馈'
       : '当前环境：iPhone · 建议改用 Safari 打开，兼容性最好'
   }
   if (isAndroid) {
-    return '当前环境：Android · 推荐使用 Chrome，当前版本加入了虚拟手柄手'
+    return '当前环境：Android · 推荐使用 Chrome，当前版本加入了水果翻滚模型与飞溅特效'
   }
   return '当前环境：桌面或其他浏览器 · 真机测试请用手机 HTTPS 链接打开'
 }
@@ -378,8 +405,8 @@ function finishRound() {
   refs.resultCombo.classList.remove('hidden')
   updatePanel(
     '挑战结束',
-    '这一版需要明确握住后才会捏爆，虚拟手会同步显示你的张手与抓手状态。',
-    '如果要上线试玩，这版更像真正的“虚拟抓取手柄”了。',
+    '这一版已经改成水果翻滚目标、果汁飞溅特效和更有层次的捏爆音效。',
+    '如果要继续打磨，下一步可以上真正的 WebGL 模型与贴图法线。',
     '再来一局',
   )
   refs.startButton.disabled = false
@@ -394,40 +421,47 @@ function isValidSpawn(baseX: number, baseY: number, radius: number) {
   return objects.every((item) => {
     if (item.crushed) return true
     const dist = Math.hypot(item.baseX - baseX, item.baseY - baseY)
-    return dist >= item.radius + radius + 28
+    return dist >= item.radius + radius + 54
   })
 }
 
 function spawnObject(): Crushable {
-  const margin = 72
-  const hudTop = Math.min(window.innerHeight * 0.24, 180)
-  const hudRight = Math.min(window.innerWidth * 0.23, 120)
+  const margin = 88
+  const hudTop = Math.min(window.innerHeight * 0.24, 190)
+  const hudRight = Math.min(window.innerWidth * 0.24, 126)
 
   let attempts = 0
-  let radius = randomBetween(38, 56)
+  let radius = randomBetween(52, 72)
   let baseX = 0
   let baseY = 0
   do {
-    radius = randomBetween(38, 56)
+    radius = randomBetween(52, 72)
     baseX = randomBetween(margin, window.innerWidth - margin - hudRight)
-    baseY = randomBetween(hudTop, window.innerHeight - margin - 90)
+    baseY = randomBetween(hudTop, window.innerHeight - margin - 110)
     attempts += 1
-  } while (attempts < 50 && !isValidSpawn(baseX, baseY, radius))
+  } while (attempts < 100 && !isValidSpawn(baseX, baseY, radius))
 
   return {
     id: nextObjectId++,
-    emoji: EMOJIS[Math.floor(Math.random() * EMOJIS.length)],
+    spriteIndex: Math.floor(Math.random() * fruitImages.length),
     x: baseX,
     y: baseY,
     baseX,
     baseY,
     radius,
+    depth: randomBetween(0.9, 1.18),
     crushed: false,
     respawnAt: 0,
     pulse: 0,
     driftAngle: randomBetween(0, Math.PI * 2),
-    driftSpeed: randomBetween(0.45, 0.95),
-    driftRadius: randomBetween(16, 34),
+    driftSpeed: randomBetween(0.26, 0.5),
+    driftRadius: randomBetween(12, 24),
+    roll: randomBetween(0, Math.PI * 2),
+    rollSpeed: randomBetween(0.45, 0.8),
+    yaw: randomBetween(-0.8, 0.8),
+    yawSpeed: randomBetween(0.45, 0.85),
+    tilt: randomBetween(-0.45, 0.45),
+    tiltSpeed: randomBetween(0.35, 0.7),
   }
 }
 
@@ -449,8 +483,11 @@ function updateObjectMotion(dt: number) {
   for (const item of objects) {
     if (item.crushed) continue
     item.driftAngle += item.driftSpeed * dt
+    item.roll += item.rollSpeed * dt
+    item.yaw += Math.sin(item.roll * 0.8) * item.yawSpeed * dt * 0.8
+    item.tilt += Math.cos(item.roll * 0.95) * item.tiltSpeed * dt * 0.6
     item.x = item.baseX + Math.cos(item.driftAngle) * item.driftRadius
-    item.y = item.baseY + Math.sin(item.driftAngle * 0.8) * item.driftRadius
+    item.y = item.baseY + Math.sin(item.driftAngle * 0.8) * item.driftRadius * 0.75
   }
 }
 
@@ -483,8 +520,7 @@ function computeFistScore(landmarks: NormalizedLandmark[]) {
     const base = landmarks[FINGER_BASES[i]]
     const extend = Math.max(distance(base, palmPoint), 0.0001)
     const fold = distance(tip, palmPoint)
-    const normalized = 1 - Math.min(fold / (extend * 2.55), 1)
-    return normalized
+    return 1 - Math.min(fold / (extend * 2.55), 1)
   })
 
   const thumbBoost = values[0] * 0.62
@@ -503,7 +539,6 @@ function updateGestureState(score: number) {
         gestureState = 'FIST_HOLD'
         exitFrames = 0
         justStartedFist = true
-        ringTimer = 140
       }
     } else if (score > config.holdThreshold) {
       gestureState = 'CLOSING'
@@ -531,56 +566,73 @@ function updateGestureState(score: number) {
   }
 }
 
-function playOscLayer(
-  now: number,
-  type: OscillatorType,
-  startFreq: number,
-  endFreq: number,
-  gainPeak: number,
-  duration: number,
-) {
+function ensureAudio() {
   if (!audioCtx) return
+  if (masterCompression) return
+  masterCompression = audioCtx.createDynamicsCompressor()
+  masterCompression.threshold.value = -26
+  masterCompression.knee.value = 10
+  masterCompression.ratio.value = 8
+  masterCompression.attack.value = 0.003
+  masterCompression.release.value = 0.18
+  masterCompression.connect(audioCtx.destination)
+}
+
+function getAudioOutput() {
+  ensureAudio()
+  return masterCompression ?? audioCtx?.destination ?? null
+}
+
+function playOscLayer(now: number, type: OscillatorType, startFreq: number, endFreq: number, gainPeak: number, duration: number, q = 0.8) {
+  if (!audioCtx) return
+  const output = getAudioOutput()
+  if (!output) return
   const osc = audioCtx.createOscillator()
   const gain = audioCtx.createGain()
   const filter = audioCtx.createBiquadFilter()
-
   osc.type = type
   osc.frequency.setValueAtTime(startFreq, now)
-  osc.frequency.exponentialRampToValueAtTime(endFreq, now + duration)
-
+  osc.frequency.exponentialRampToValueAtTime(Math.max(endFreq, 20), now + duration)
   filter.type = 'lowpass'
-  filter.frequency.setValueAtTime(2200, now)
-
+  filter.frequency.setValueAtTime(3200, now)
+  filter.Q.value = q
   gain.gain.setValueAtTime(0.0001, now)
-  gain.gain.exponentialRampToValueAtTime(gainPeak, now + 0.008)
+  gain.gain.exponentialRampToValueAtTime(gainPeak, now + 0.01)
   gain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
-
   osc.connect(filter)
   filter.connect(gain)
-  gain.connect(audioCtx.destination)
+  gain.connect(output)
   osc.start(now)
   osc.stop(now + duration + 0.02)
 }
 
-function playNoiseBurst(now: number) {
+function playNoiseBurst(now: number, duration: number, peak: number, lowpass: number, bandpass: number) {
   if (!audioCtx) return
-  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.08, audioCtx.sampleRate)
+  const output = getAudioOutput()
+  if (!output) return
+  const buffer = audioCtx.createBuffer(1, Math.max(1, Math.floor(audioCtx.sampleRate * duration)), audioCtx.sampleRate)
   const data = buffer.getChannelData(0)
   for (let i = 0; i < data.length; i += 1) {
-    data[i] = (Math.random() * 2 - 1) * (1 - i / data.length)
+    const decay = 1 - i / data.length
+    data[i] = (Math.random() * 2 - 1) * decay
   }
   const source = audioCtx.createBufferSource()
-  const filter = audioCtx.createBiquadFilter()
+  const bp = audioCtx.createBiquadFilter()
+  const lp = audioCtx.createBiquadFilter()
   const gain = audioCtx.createGain()
   source.buffer = buffer
-  filter.type = 'bandpass'
-  filter.frequency.value = 1400
+  bp.type = 'bandpass'
+  bp.frequency.value = bandpass
+  bp.Q.value = 0.7
+  lp.type = 'lowpass'
+  lp.frequency.value = lowpass
   gain.gain.setValueAtTime(0.0001, now)
-  gain.gain.exponentialRampToValueAtTime(0.06, now + 0.01)
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.07)
-  source.connect(filter)
-  filter.connect(gain)
-  gain.connect(audioCtx.destination)
+  gain.gain.exponentialRampToValueAtTime(peak, now + 0.008)
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
+  source.connect(bp)
+  bp.connect(lp)
+  lp.connect(gain)
+  gain.connect(output)
   source.start(now)
 }
 
@@ -588,31 +640,69 @@ function playCrushSound() {
   if (!audioCtx) return
   const now = audioCtx.currentTime
   const heavy = feedbackIntensity === 'heavy'
-
-  playOscLayer(now, 'triangle', randomBetween(132, 156), randomBetween(52, 68), heavy ? 0.28 : 0.18, 0.24)
-  playOscLayer(now + 0.004, 'square', randomBetween(220, 280), randomBetween(88, 120), heavy ? 0.16 : 0.11, 0.16)
-  playOscLayer(now + 0.008, 'sawtooth', randomBetween(520, 660), randomBetween(170, 230), heavy ? 0.08 : 0.05, 0.1)
-  playOscLayer(now + 0.014, 'triangle', randomBetween(760, 920), randomBetween(240, 320), heavy ? 0.05 : 0.03, 0.08)
-  playNoiseBurst(now + 0.002)
-  playNoiseBurst(now + 0.028)
+  playOscLayer(now, 'triangle', 180, 58, heavy ? 0.22 : 0.14, 0.22)
+  playOscLayer(now + 0.015, 'triangle', 124, 72, heavy ? 0.14 : 0.09, 0.18)
+  playOscLayer(now + 0.03, 'sine', 680, 220, heavy ? 0.05 : 0.03, 0.11)
+  playOscLayer(now + 0.055, 'square', 420, 130, heavy ? 0.08 : 0.05, 0.12)
+  playNoiseBurst(now + 0.004, 0.08, heavy ? 0.08 : 0.05, 1800, 650)
+  playNoiseBurst(now + 0.045, 0.14, heavy ? 0.065 : 0.045, 1400, 420)
+  playNoiseBurst(now + 0.09, 0.18, heavy ? 0.04 : 0.03, 1000, 260)
 }
 
 function triggerHaptics() {
   if (typeof navigator.vibrate !== 'function') return
-  if (feedbackIntensity === 'heavy') {
-    navigator.vibrate([18, 14, 24, 12, 30])
-  } else if (feedbackIntensity === 'medium') {
-    navigator.vibrate([12, 12, 18])
-  } else {
-    navigator.vibrate(18)
+  if (feedbackIntensity === 'heavy') navigator.vibrate([14, 10, 18, 10, 24, 18, 12])
+  else if (feedbackIntensity === 'medium') navigator.vibrate([12, 12, 18])
+  else navigator.vibrate(18)
+}
+
+function createJuiceBurst(target: Crushable) {
+  const splashHue = [8, 18, 38, 102, 352][target.spriteIndex % 5] ?? randomBetween(0, 360)
+  for (let i = 0; i < config.particleBurst; i += 1) {
+    const angle = randomBetween(-Math.PI * 0.95, Math.PI * 0.95)
+    const speed = randomBetween(140, feedbackIntensity === 'heavy' ? 540 : 360)
+    particles.push({
+      x: target.x,
+      y: target.y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - randomBetween(20, 140),
+      life: randomBetween(0.32, 0.74),
+      maxLife: randomBetween(0.32, 0.74),
+      size: randomBetween(6, 22),
+      hue: splashHue + randomBetween(-16, 16),
+      alpha: randomBetween(0.45, 0.95),
+      kind: i % 4 === 0 ? 'pulp' : 'juice',
+      stretch: randomBetween(0.8, 2.8),
+      gravity: randomBetween(520, 880),
+      spin: randomBetween(-6, 6),
+      rotation: randomBetween(0, Math.PI * 2),
+    })
+  }
+
+  for (let i = 0; i < 8; i += 1) {
+    particles.push({
+      x: randomBetween(window.innerWidth * 0.12, window.innerWidth * 0.88),
+      y: randomBetween(window.innerHeight * 0.08, window.innerHeight * 0.3),
+      vx: randomBetween(-40, 40),
+      vy: randomBetween(40, 120),
+      life: randomBetween(0.28, 0.5),
+      maxLife: randomBetween(0.28, 0.5),
+      size: randomBetween(20, 44),
+      hue: splashHue + randomBetween(-10, 10),
+      alpha: randomBetween(0.12, 0.24),
+      kind: 'screen',
+      stretch: randomBetween(1.4, 2.3),
+      gravity: randomBetween(40, 110),
+      spin: randomBetween(-2, 2),
+      rotation: randomBetween(0, Math.PI * 2),
+    })
   }
 }
 
 function emitCrush(target: Crushable) {
   if (runtimeState !== 'running') return
-
   target.crushed = true
-  target.respawnAt = performance.now() + 480
+  target.respawnAt = performance.now() + 540
   target.pulse = 1.3
   crushCount += 1
   comboCount = comboTimer > 0 ? comboCount + 1 : 1
@@ -621,26 +711,11 @@ function emitCrush(target: Crushable) {
   lockedTargetId = null
   lockCharge = 0
   updateScoreBoard()
-
-  flashTimer = feedbackIntensity === 'heavy' ? 160 : 120
-  shakeTimer = feedbackIntensity === 'heavy' ? 150 : 100
+  flashTimer = feedbackIntensity === 'heavy' ? 170 : 130
+  shakeTimer = feedbackIntensity === 'heavy' ? 160 : 110
   playCrushSound()
   triggerHaptics()
-
-  for (let i = 0; i < config.particleBurst; i += 1) {
-    const angle = (Math.PI * 2 * i) / config.particleBurst + randomBetween(-0.32, 0.32)
-    const speed = randomBetween(200, feedbackIntensity === 'heavy' ? 500 : 340)
-    particles.push({
-      x: target.x,
-      y: target.y,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed,
-      life: randomBetween(0.26, 0.52),
-      maxLife: randomBetween(0.26, 0.52),
-      size: randomBetween(5, 13),
-      hue: randomBetween(0, 360),
-    })
-  }
+  createJuiceBurst(target)
 }
 
 function findLockedTarget(): Crushable | undefined {
@@ -657,9 +732,7 @@ function updateTargetLock() {
   const current = findLockedTarget()
   if (current) {
     const currentDist = Math.hypot(current.x - grabPoint.x, current.y - grabPoint.y)
-    if (currentDist <= current.radius + config.lockRadius + 22) {
-      return
-    }
+    if (currentDist <= current.radius + config.lockRadius + 22) return
   }
 
   let best: Crushable | undefined
@@ -690,16 +763,12 @@ function updateLockCharge(dt: number) {
   const gestureBoost = gestureState === 'FIST_HOLD' ? 1 : 0
   const chargeRate = config.chargeRate * (0.4 + closeFactor * 0.7) + gestureBoost * config.chargeBoostRate * 0.9
 
-  if (dist <= nearRadius + 18) {
-    lockCharge = clamp(lockCharge + dt * chargeRate, 0, LOCK_CHARGE_MAX)
-  } else {
-    lockCharge = Math.max(0, lockCharge - dt * config.chargeDecay)
-  }
+  if (dist <= nearRadius + 18) lockCharge = clamp(lockCharge + dt * chargeRate, 0, LOCK_CHARGE_MAX)
+  else lockCharge = Math.max(0, lockCharge - dt * config.chargeDecay)
 }
 
 function detectHit() {
   if (!grabPoint.visible || runtimeState !== 'running') return
-
   const locked = findLockedTarget()
   if (!locked) return
 
@@ -720,7 +789,6 @@ function detectHit() {
 function drawCameraLayer() {
   cameraCtx.clearRect(0, 0, refs.cameraCanvas.width, refs.cameraCanvas.height)
   if (refs.video.readyState < 2) return
-
   const w = refs.cameraCanvas.width
   const h = refs.cameraCanvas.height
   cameraCtx.save()
@@ -728,50 +796,49 @@ function drawCameraLayer() {
   cameraCtx.scale(-1, 1)
   cameraCtx.drawImage(refs.video, 0, 0, w, h)
   cameraCtx.restore()
-
-  cameraCtx.fillStyle = 'rgba(4, 10, 22, 0.72)'
+  cameraCtx.fillStyle = 'rgba(255,255,255,0.08)'
   cameraCtx.fillRect(0, 0, w, h)
 }
 
 function drawBackgroundLayer() {
   const w = refs.gameCanvas.width
   const h = refs.gameCanvas.height
-
-  const sky = gameCtx.createLinearGradient(0, 0, 0, h)
-  sky.addColorStop(0, 'rgba(49, 85, 150, 0.14)')
-  sky.addColorStop(0.55, 'rgba(108, 150, 213, 0.08)')
-  sky.addColorStop(1, 'rgba(255, 234, 164, 0.08)')
-  gameCtx.fillStyle = sky
-  gameCtx.fillRect(0, 0, w, h)
-
-  for (let i = 0; i < 90; i += 1) {
-    const x = ((i * 173) % 997) / 997 * w
-    const y = ((i * 97) % 541) / 541 * h * 0.72
-    const size = i % 7 === 0 ? 2.3 : 1.2
-    gameCtx.fillStyle = i % 7 === 0 ? 'rgba(255, 210, 101, 0.82)' : 'rgba(255,255,255,0.82)'
-    gameCtx.beginPath()
-    gameCtx.arc(x, y, size, 0, Math.PI * 2)
-    gameCtx.fill()
+  if (backgroundImage.complete && backgroundImage.naturalWidth > 0) {
+    const imageRatio = backgroundImage.naturalWidth / backgroundImage.naturalHeight
+    const canvasRatio = w / h
+    let drawWidth = w
+    let drawHeight = h
+    let dx = 0
+    let dy = 0
+    if (imageRatio > canvasRatio) {
+      drawHeight = h
+      drawWidth = h * imageRatio
+      dx = (w - drawWidth) / 2
+    } else {
+      drawWidth = w
+      drawHeight = w / imageRatio
+      dy = (h - drawHeight) / 2
+    }
+    gameCtx.drawImage(backgroundImage, dx, dy, drawWidth, drawHeight)
+  } else {
+    const sky = gameCtx.createLinearGradient(0, 0, 0, h)
+    sky.addColorStop(0, '#315596')
+    sky.addColorStop(1, '#9cc2ef')
+    gameCtx.fillStyle = sky
+    gameCtx.fillRect(0, 0, w, h)
   }
-
-  gameCtx.fillStyle = 'rgba(134, 183, 97, 0.18)'
-  gameCtx.fillRect(0, h * 0.8, w, h * 0.2)
 }
 
 function drawVirtualHand() {
   if (!grabPoint.visible) return
-
   overlayCtx.save()
   overlayCtx.translate(grabPoint.x, grabPoint.y)
-
   const grab = gestureState === 'FIST_HOLD'
   const scale = grab ? 0.94 : 1
   overlayCtx.scale(scale, scale)
-
   overlayCtx.shadowColor = 'rgba(78, 49, 20, 0.28)'
   overlayCtx.shadowBlur = 18
   overlayCtx.shadowOffsetY = 8
-
   const skin = '#f4c38c'
   const shade = '#dca66f'
   const line = '#8f6038'
@@ -781,12 +848,10 @@ function drawVirtualHand() {
     overlayCtx.fillStyle = skin
     overlayCtx.strokeStyle = line
     overlayCtx.lineWidth = 4
-
     overlayCtx.beginPath()
     overlayCtx.roundRect(-30, -12, 60, 94, 24)
     overlayCtx.fill()
     overlayCtx.stroke()
-
     const fingerXs = [-26, -10, 6, 22]
     const fingerHeights = [68, 84, 79, 62]
     fingerXs.forEach((x, index) => {
@@ -795,7 +860,6 @@ function drawVirtualHand() {
       overlayCtx.fill()
       overlayCtx.stroke()
     })
-
     overlayCtx.save()
     overlayCtx.translate(-34, 14)
     overlayCtx.rotate(-0.85)
@@ -804,12 +868,10 @@ function drawVirtualHand() {
     overlayCtx.fill()
     overlayCtx.stroke()
     overlayCtx.restore()
-
     overlayCtx.fillStyle = shade
     overlayCtx.beginPath()
     overlayCtx.roundRect(-24, 12, 48, 56, 18)
     overlayCtx.fill()
-
     overlayCtx.fillStyle = nail
     ;[-25, -9, 7, 23].forEach((x, index) => {
       overlayCtx.beginPath()
@@ -820,19 +882,16 @@ function drawVirtualHand() {
     overlayCtx.fillStyle = skin
     overlayCtx.strokeStyle = line
     overlayCtx.lineWidth = 4
-
     overlayCtx.beginPath()
     overlayCtx.roundRect(-34, -2, 68, 74, 28)
     overlayCtx.fill()
     overlayCtx.stroke()
-
     ;[-25, -9, 7, 23].forEach((x) => {
       overlayCtx.beginPath()
       overlayCtx.roundRect(x, -20, 14, 30, 10)
       overlayCtx.fill()
       overlayCtx.stroke()
     })
-
     overlayCtx.save()
     overlayCtx.translate(-34, 22)
     overlayCtx.rotate(-0.72)
@@ -841,7 +900,6 @@ function drawVirtualHand() {
     overlayCtx.fill()
     overlayCtx.stroke()
     overlayCtx.restore()
-
     overlayCtx.fillStyle = shade
     overlayCtx.beginPath()
     overlayCtx.roundRect(-24, 18, 48, 34, 16)
@@ -849,6 +907,109 @@ function drawVirtualHand() {
   }
 
   overlayCtx.restore()
+}
+
+function drawFruitModel(item: Crushable, now: number) {
+  const image = fruitImages[item.spriteIndex]
+  const squash = 0.9 + Math.sin(item.roll * 1.1) * 0.08
+  const width = item.radius * 2.05 * item.depth * (1 + Math.sin(item.yaw) * 0.14)
+  const height = item.radius * 1.78 * item.depth * squash
+  const sideOffset = Math.sin(item.yaw) * item.radius * 0.18
+  const glow = item.id === lockedTargetId ? 0.34 : 0.12
+
+  gameCtx.save()
+  gameCtx.translate(item.x, item.y)
+  gameCtx.rotate(Math.sin(item.roll * 0.9) * 0.12)
+  gameCtx.scale(1 + item.pulse * 0.2, 1 + item.pulse * 0.2)
+
+  gameCtx.fillStyle = `rgba(255,255,255,${glow})`
+  gameCtx.beginPath()
+  gameCtx.ellipse(0, height * 0.22, width * 0.62, height * 0.28, 0, 0, Math.PI * 2)
+  gameCtx.fill()
+
+  gameCtx.fillStyle = 'rgba(0,0,0,0.16)'
+  gameCtx.beginPath()
+  gameCtx.ellipse(0, height * 0.8, width * 0.42, height * 0.18, 0, 0, Math.PI * 2)
+  gameCtx.fill()
+
+  const shellGradient = gameCtx.createLinearGradient(-width * 0.6, -height * 0.7, width * 0.7, height * 0.8)
+  shellGradient.addColorStop(0, 'rgba(255,255,255,0.95)')
+  shellGradient.addColorStop(0.45, 'rgba(255,255,255,0.22)')
+  shellGradient.addColorStop(1, 'rgba(0,0,0,0.16)')
+
+  gameCtx.save()
+  gameCtx.translate(sideOffset, 0)
+  gameCtx.beginPath()
+  gameCtx.ellipse(0, 0, width * 0.52, height * 0.52, item.tilt, 0, Math.PI * 2)
+  gameCtx.clip()
+  if (image.complete && image.naturalWidth > 0) {
+    gameCtx.drawImage(image, -width * 0.6, -height * 0.66, width * 1.2, height * 1.25)
+  } else {
+    gameCtx.fillStyle = '#ffd47b'
+    gameCtx.fillRect(-width * 0.6, -height * 0.66, width * 1.2, height * 1.25)
+  }
+  gameCtx.fillStyle = shellGradient
+  gameCtx.fillRect(-width * 0.6, -height * 0.66, width * 1.2, height * 1.25)
+  gameCtx.restore()
+
+  gameCtx.strokeStyle = item.id === lockedTargetId ? 'rgba(255,219,112,0.98)' : 'rgba(255,255,255,0.26)'
+  gameCtx.lineWidth = item.id === lockedTargetId ? 4 : 2
+  gameCtx.beginPath()
+  gameCtx.ellipse(0, 0, width * 0.52, height * 0.52, item.tilt, 0, Math.PI * 2)
+  gameCtx.stroke()
+
+  if (item.id === lockedTargetId) {
+    gameCtx.strokeStyle = 'rgba(255,215,106,0.4)'
+    gameCtx.lineWidth = 2
+    gameCtx.beginPath()
+    gameCtx.ellipse(0, 0, width * 0.64 + Math.sin(now / 120) * 4, height * 0.64 + Math.sin(now / 120) * 4, 0, 0, Math.PI * 2)
+    gameCtx.stroke()
+  }
+
+  gameCtx.restore()
+}
+
+function drawParticles(dt: number) {
+  const maxParticles = performanceTier === 'high' ? 240 : performanceTier === 'medium' ? 160 : 90
+  if (particles.length > maxParticles) particles.splice(0, particles.length - maxParticles)
+
+  for (let i = particles.length - 1; i >= 0; i -= 1) {
+    const particle = particles[i]
+    particle.life -= dt
+    if (particle.life <= 0) {
+      particles.splice(i, 1)
+      continue
+    }
+    particle.x += particle.vx * dt
+    particle.y += particle.vy * dt
+    particle.vx *= particle.kind === 'screen' ? 0.99 : 0.975
+    particle.vy = particle.vy * 0.98 + particle.gravity * dt
+    particle.rotation += particle.spin * dt
+
+    const alpha = (particle.life / particle.maxLife) * particle.alpha
+    gameCtx.save()
+    gameCtx.translate(particle.x, particle.y)
+    gameCtx.rotate(particle.rotation)
+
+    if (particle.kind === 'screen') {
+      gameCtx.fillStyle = `hsla(${particle.hue} 92% 58% / ${alpha})`
+      gameCtx.beginPath()
+      gameCtx.ellipse(0, 0, particle.size * particle.stretch, particle.size * 0.46, 0, 0, Math.PI * 2)
+      gameCtx.fill()
+    } else {
+      gameCtx.fillStyle = `hsla(${particle.hue} 92% 56% / ${alpha})`
+      gameCtx.beginPath()
+      gameCtx.ellipse(0, 0, particle.size * particle.stretch, particle.size * 0.62, 0, 0, Math.PI * 2)
+      gameCtx.fill()
+      if (particle.kind === 'pulp') {
+        gameCtx.fillStyle = `hsla(${particle.hue + 16} 90% 78% / ${alpha * 0.86})`
+        gameCtx.beginPath()
+        gameCtx.arc(0, 0, particle.size * 0.28, 0, Math.PI * 2)
+        gameCtx.fill()
+      }
+    }
+    gameCtx.restore()
+  }
 }
 
 function drawObjects(dt: number) {
@@ -865,103 +1026,40 @@ function drawObjects(dt: number) {
   }
 
   updateObjectMotion(dt)
-
   gameCtx.save()
   gameCtx.translate(offsetX, offsetY)
 
   for (const item of objects) {
-    if (item.crushed && now >= item.respawnAt) {
-      respawnObject(item)
-    }
-
+    if (item.crushed && now >= item.respawnAt) respawnObject(item)
     if (!item.crushed) {
       item.pulse = Math.max(0, item.pulse - dt * 3.2)
-      const scale = 1 + item.pulse * 0.22
-      gameCtx.save()
-      gameCtx.translate(item.x, item.y)
-      gameCtx.scale(scale, scale)
-
-      const isLocked = item.id === lockedTargetId
-      const near = grabPoint.visible && Math.hypot(item.x - grabPoint.x, item.y - grabPoint.y) <= item.radius + config.hitPadding
-      gameCtx.beginPath()
-      gameCtx.fillStyle = isLocked ? 'rgba(255,255,255,0.36)' : near ? 'rgba(255,255,255,0.24)' : 'rgba(255,255,255,0.14)'
-      gameCtx.arc(0, 0, item.radius + 18, 0, Math.PI * 2)
-      gameCtx.fill()
-
-      gameCtx.beginPath()
-      gameCtx.strokeStyle = isLocked ? 'rgba(255,215,106,0.98)' : near ? 'rgba(124,255,175,0.9)' : 'rgba(158,232,255,0.35)'
-      gameCtx.lineWidth = isLocked ? 5 : near ? 4 : 2
-      gameCtx.arc(0, 0, item.radius + 12, 0, Math.PI * 2)
-      gameCtx.stroke()
-
-      if (isLocked) {
-        gameCtx.beginPath()
-        gameCtx.strokeStyle = 'rgba(255,215,106,0.55)'
-        gameCtx.lineWidth = 2
-        gameCtx.arc(0, 0, item.radius + 22 + Math.sin(now / 120) * 4, 0, Math.PI * 2)
-        gameCtx.stroke()
-      }
-
-      gameCtx.font = `${item.radius * 1.45}px system-ui`
-      gameCtx.textAlign = 'center'
-      gameCtx.textBaseline = 'middle'
-      gameCtx.fillText(item.emoji, 0, 2)
-      gameCtx.restore()
+      drawFruitModel(item, now)
     }
   }
 
-  const maxParticles = performanceTier === 'high' ? 180 : performanceTier === 'medium' ? 104 : 58
-  if (particles.length > maxParticles) particles.splice(0, particles.length - maxParticles)
-
-  for (let i = particles.length - 1; i >= 0; i -= 1) {
-    const particle = particles[i]
-    particle.life -= dt
-    if (particle.life <= 0) {
-      particles.splice(i, 1)
-      continue
-    }
-    particle.x += particle.vx * dt
-    particle.y += particle.vy * dt
-    particle.vx *= 0.975
-    particle.vy *= 0.975
-    particle.vy += 420 * dt
-
-    const alpha = particle.life / particle.maxLife
-    gameCtx.fillStyle = `hsla(${particle.hue} 100% 70% / ${alpha})`
-    gameCtx.beginPath()
-    gameCtx.arc(particle.x, particle.y, particle.size * alpha, 0, Math.PI * 2)
-    gameCtx.fill()
-  }
-
+  drawParticles(dt)
   gameCtx.restore()
 }
 
 function drawOverlay() {
   overlayCtx.clearRect(0, 0, refs.overlayCanvas.width, refs.overlayCanvas.height)
-
   if (flashTimer > 0) {
-    overlayCtx.fillStyle = `rgba(255,255,255,${Math.min(flashTimer / 160, 0.45)})`
+    overlayCtx.fillStyle = `rgba(255,255,255,${Math.min(flashTimer / 170, 0.36)})`
     overlayCtx.fillRect(0, 0, refs.overlayCanvas.width, refs.overlayCanvas.height)
   }
 
   const locked = findLockedTarget()
   if (locked) {
     overlayCtx.beginPath()
-    overlayCtx.strokeStyle = 'rgba(255,215,106,0.6)'
+    overlayCtx.strokeStyle = 'rgba(255,215,106,0.62)'
     overlayCtx.lineWidth = 2
-    overlayCtx.arc(locked.x, locked.y, locked.radius + 30 + Math.sin(performance.now() / 120) * 5, 0, Math.PI * 2)
+    overlayCtx.arc(locked.x, locked.y, locked.radius + 34 + Math.sin(performance.now() / 120) * 5, 0, Math.PI * 2)
     overlayCtx.stroke()
 
     overlayCtx.beginPath()
     overlayCtx.strokeStyle = lockCharge >= 0.75 ? 'rgba(255,110,110,0.95)' : 'rgba(124,255,175,0.95)'
     overlayCtx.lineWidth = 6
-    overlayCtx.arc(
-      locked.x,
-      locked.y,
-      locked.radius + 24,
-      -Math.PI / 2,
-      -Math.PI / 2 + Math.PI * 2 * lockCharge,
-    )
+    overlayCtx.arc(locked.x, locked.y, locked.radius + 26, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * lockCharge)
     overlayCtx.stroke()
   }
 
@@ -1025,13 +1123,10 @@ function processDetection(result: HandLandmarkerResult | null) {
   updateTargetLock()
 
   const rawScore = computeFistScore(landmarks)
-  fistScoreSmoothed =
-    fistScoreSmoothed * (1 - config.smoothingAlpha) + rawScore * config.smoothingAlpha
+  fistScoreSmoothed = fistScoreSmoothed * (1 - config.smoothingAlpha) + rawScore * config.smoothingAlpha
   updateGestureState(fistScoreSmoothed)
 
-  if (justStartedFist) {
-    detectHit()
-  }
+  if (justStartedFist) detectHit()
 
   if (runtimeState === 'running') {
     const cooldownLeft = Math.max(0, CRUSH_COOLDOWN_MS - (performance.now() - lastCrushAt))
@@ -1043,20 +1138,17 @@ function processDetection(result: HandLandmarkerResult | null) {
               ? `命中成功，冷却 ${(cooldownLeft / 1000).toFixed(1)}s，先松手再握`
               : '先松手，再重新握拳触发下一次'
             : lockCharge >= 0.72
-              ? '重新握拳可捏爆目标'
+              ? '重新握拳可捏爆水果'
               : '保持锁定，准备握拳'
           : '已锁定，重新握拳才触发'
-        : '把手移到目标附近',
+        : '把手移到水果附近',
     )
   }
 }
 
 async function setupHandTracking() {
   updateStatus('加载手势识别模型...')
-  const resolver = await FilesetResolver.forVisionTasks(
-    'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm',
-  )
-
+  const resolver = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm')
   handLandmarker = await HandLandmarker.createFromOptions(resolver, {
     baseOptions: {
       modelAssetPath:
@@ -1075,10 +1167,7 @@ function stopCameraStream() {
 }
 
 async function setupCamera() {
-  if (!navigator.mediaDevices?.getUserMedia) {
-    throw new Error('当前浏览器不支持 getUserMedia')
-  }
-
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error('当前浏览器不支持 getUserMedia')
   updateStatus('请求相机权限...')
   stopCameraStream()
   stream = await navigator.mediaDevices.getUserMedia({
@@ -1089,7 +1178,6 @@ async function setupCamera() {
       height: { ideal: 480 },
     },
   })
-
   refs.video.srcObject = stream
   await refs.video.play()
 }
@@ -1109,11 +1197,8 @@ async function toggleCameraFacingMode() {
 
 async function toggleFullscreen() {
   try {
-    if (!document.fullscreenElement) {
-      await document.documentElement.requestFullscreen()
-    } else {
-      await document.exitFullscreen()
-    }
+    if (!document.fullscreenElement) await document.documentElement.requestFullscreen()
+    else await document.exitFullscreen()
   } catch (error) {
     console.warn('Fullscreen toggle failed', error)
   }
@@ -1121,11 +1206,8 @@ async function toggleFullscreen() {
 }
 
 function handleVisibilityChange() {
-  if (document.hidden) {
-    stream?.getVideoTracks().forEach((track) => (track.enabled = false))
-  } else {
-    stream?.getVideoTracks().forEach((track) => (track.enabled = true))
-  }
+  if (document.hidden) stream?.getVideoTracks().forEach((track) => (track.enabled = false))
+  else stream?.getVideoTracks().forEach((track) => (track.enabled = true))
 }
 
 function describeStartupError(error: unknown) {
@@ -1153,7 +1235,7 @@ function describeStartupError(error: unknown) {
   }
   return {
     title: '启动失败',
-    desc: '初始化手势识别或相机时出错，请重试一次，或换浏览器/网络环境。',
+    desc: '初始化手势识别、贴图资源或相机时出错，请重试一次，或换浏览器/网络环境。',
     meta: message,
   }
 }
@@ -1166,31 +1248,20 @@ async function startGame() {
   setRuntimeState('starting')
 
   try {
-    if (!isSecureRuntime()) {
-      throw new Error('Insecure context')
-    }
-
+    if (!isSecureRuntime()) throw new Error('Insecure context')
     audioCtx = audioCtx ?? new AudioContext()
     if (audioCtx.state === 'suspended') await audioCtx.resume()
-
     feedbackIntensity = chooseFeedbackIntensity()
     refs.feedbackText.textContent = feedbackIntensity
     applyPerformanceTier(choosePerformanceTier())
-
     resizeCanvases()
     resetRoundStats()
     resetObjects()
-
-    if (!stream) {
-      await setupCamera()
-    }
-    if (!handLandmarker) {
-      await setupHandTracking()
-    }
-
+    if (!stream) await setupCamera()
+    if (!handLandmarker) await setupHandTracking()
     setRuntimeState('running')
     updateStatus('挑战开始')
-    updateHint('只有重新握拳命中目标才会销毁；两次触发间隔 1 秒。')
+    updateHint('水果会慢悠悠翻滚；只有重新握拳命中目标才会捏爆，且两次触发间隔 1 秒。')
     refs.startButton.textContent = '挑战中'
     refs.panelAction.textContent = '开始挑战'
   } catch (error) {
@@ -1223,9 +1294,7 @@ function tick(ts: number) {
 
   if (runtimeState === 'running') {
     roundTimeLeftMs = Math.max(0, roundTimeLeftMs - dt * 1000)
-    if (roundTimeLeftMs === 0) {
-      finishRound()
-    }
+    if (roundTimeLeftMs === 0) finishRound()
     updateLockCharge(dt)
     updateScoreBoard()
   }
@@ -1250,7 +1319,6 @@ function tick(ts: number) {
 
   flashTimer = Math.max(0, flashTimer - dt * 1000)
   shakeTimer = Math.max(0, shakeTimer - dt * 1000)
-  ringTimer = Math.max(0, ringTimer - dt * 1000)
 
   drawCameraLayer()
   drawObjects(dt)
@@ -1305,11 +1373,11 @@ updateFullscreenLabel()
 updateCameraButtonLabel()
 updatePanel(
   '锁定目标，重新握拳再捏爆',
-  '点击开始后授权相机，屏幕里的虚拟手会实时反映你的张手或抓手。先锁定目标，再重新握拳，才能触发一次捏爆。',
+  '点击开始后授权相机，屏幕里的虚拟手会实时反映你的张手或抓手。先锁定水果，再重新握拳，才能触发一次捏爆。',
   getStartupMeta(),
   '开始挑战',
 )
-updateHint('这是移动端虚拟手柄版。必须先锁定目标，再重新握拳，且两次触发间隔 1 秒。')
+updateHint('这是移动端虚拟手柄版。水果会慢悠悠翻滚，必须先锁定目标，再重新握拳，且两次触发间隔 1 秒。')
 updateStatus('等待启动')
 setRuntimeState('idle')
 bindStartActions()

@@ -9,6 +9,7 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   touch-action: manipulation;
+  color-scheme: dark;
 }
 
 * {
@@ -22,7 +23,7 @@ body,
   width: 100%;
   min-height: 100%;
   overflow: hidden;
-  background: linear-gradient(180deg, #274a83 0%, #87acd9 100%);
+  background: #4d75b5;
 }
 
 body {
@@ -41,17 +42,13 @@ select {
   width: 100vw;
   height: 100svh;
   overflow: hidden;
-  background: linear-gradient(180deg, #2f4f8c 0%, #86addb 100%);
+  background: #4d75b5;
 }
 
 .game-bg {
   position: absolute;
   inset: 0;
-  background:
-    linear-gradient(180deg, rgba(43, 80, 142, 0.12) 0%, rgba(255, 255, 255, 0.04) 100%),
-    radial-gradient(circle at 20% 24%, rgba(255, 237, 148, 0.24), transparent 16%),
-    radial-gradient(circle at 78% 34%, rgba(255, 255, 255, 0.12), transparent 24%),
-    linear-gradient(180deg, rgba(44, 82, 145, 0.82) 0%, rgba(130, 171, 222, 0.7) 100%);
+  background: transparent;
 }
 
 video,
@@ -68,7 +65,7 @@ video {
 }
 
 #cameraCanvas {
-  opacity: 0.05;
+  opacity: 0.04;
 }
 
 #cameraCanvas,
@@ -141,9 +138,9 @@ video {
 .step-item,
 .result-line,
 .mini-pill {
-  background: rgba(26, 47, 87, 0.42);
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  box-shadow: 0 12px 40px rgba(14, 23, 54, 0.22);
+  background: rgba(20, 34, 63, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  box-shadow: 0 12px 40px rgba(14, 23, 54, 0.24);
 }
 
 .badge,
