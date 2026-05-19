@@ -10,7 +10,6 @@ import { createThreeFruitScene, type FruitVisual } from './three-scene'
 
 type GestureState = 'OPEN' | 'CLOSING' | 'FIST_HOLD'
 type PerformanceTier = 'high' | 'medium' | 'low'
-type FeedbackIntensity = 'light' | 'medium' | 'heavy'
 type RuntimeState = 'idle' | 'starting' | 'running' | 'error' | 'ended'
 type CameraFacingMode = 'environment' | 'user'
 
@@ -71,15 +70,10 @@ type AppRefs = {
   statusText: HTMLDivElement
   hintText: HTMLDivElement
   startButton: HTMLButtonElement
-  debugText: HTMLPreElement
-  perfText: HTMLSpanElement
-  feedbackText: HTMLSpanElement
   installButton: HTMLButtonElement
   fullscreenButton: HTMLButtonElement
   switchCameraButton: HTMLButtonElement
   panelTitle: HTMLHeadingElement
-  panelDesc: HTMLParagraphElement
-  panelMeta: HTMLParagraphElement
   panelAction: HTMLButtonElement
   panel: HTMLDivElement
   scoreText: HTMLSpanElement
@@ -87,7 +81,7 @@ type AppRefs = {
   timerText: HTMLSpanElement
   resultScore: HTMLParagraphElement
   resultCombo: HTMLParagraphElement
-  miniStatsCard: HTMLDivElement
+  gameHud: HTMLDivElement
 }
 
 type DeferredInstallPrompt = Event & {
@@ -95,7 +89,6 @@ type DeferredInstallPrompt = Event & {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>
 }
 
-const SHOW_DEBUG = import.meta.env.DEV
 const COMBO_WINDOW_MS = 1800
 const ROUND_DURATION_MS = 60000
 const LOCK_CHARGE_MAX = 1
@@ -123,56 +116,46 @@ app.innerHTML = `
     <canvas id="overlayCanvas"></canvas>
 
     <div class="intro-panel" id="panel">
-      <div class="intro-chip">Hand Crush Web · Three.js 3D 版</div>
-      <h1 id="panelTitle">锁定 3D 水果，重新握拳再捏爆</h1>
-      <p id="panelDesc">现在屏幕里会显示你的虚拟游戏手。先靠近目标完成锁定，再明确做抓握动作，才能触发爆裂。</p>
-      <div class="step-list">
-        <div class="step-item"><span>1</span><p>点击开始并允许相机权限</p></div>
-        <div class="step-item"><span>2</span><p>把虚拟手移到 3D 翻滚水果附近</p></div>
-        <div class="step-item"><span>3</span><p>看到锁定后，重新握拳一次捏爆它</p></div>
+      <h1 id="panelTitle">抓爆水果</h1>
+      <div class="rule-list">
+        <div class="rule-item">把手移到水果上方</div>
+        <div class="rule-item">重新握拳一次就能抓爆</div>
+        <div class="rule-item">60 秒内尽量拿高分</div>
       </div>
-      <p id="panelMeta" class="intro-meta">推荐：Android Chrome / iPhone Safari · 需要 HTTPS 才能正常调用相机</p>
       <p id="resultScore" class="result-line hidden"></p>
       <p id="resultCombo" class="result-line hidden"></p>
       <div class="intro-actions">
-        <button id="panelAction" class="start-button">开始挑战</button>
+        <button id="panelAction" class="start-button">开始游戏</button>
       </div>
     </div>
 
-    <div class="hud top-left compact-hud">
-      <div class="badge">Virtual Hand + Three.js</div>
-      <div id="statusText" class="status">等待启动</div>
-      <div id="hintText" class="hint">先锁定目标，再重新握拳，才会捏爆水果。</div>
-    </div>
+    <div id="gameHud" class="hidden">
+      <div class="hud top-left">
+        <div id="statusText" class="status">把整只手放进画面里</div>
+        <div id="hintText" class="hint">移动到水果上，再重新握拳</div>
+      </div>
 
-    <div class="hud top-right controls mobile-stack">
-      <button id="switchCameraButton" class="secondary-button">切后置</button>
-      <button id="fullscreenButton" class="secondary-button">全屏</button>
-      <button id="installButton" class="secondary-button hidden">安装</button>
-      <button id="startButton" class="start-button">开始</button>
-    </div>
+      <div class="hud top-right mobile-stack">
+        <button id="switchCameraButton" class="secondary-button">切后置</button>
+        <button id="fullscreenButton" class="secondary-button">全屏</button>
+        <button id="installButton" class="secondary-button hidden">安装</button>
+        <button id="startButton" class="start-button hidden">开始</button>
+      </div>
 
-    <div class="hud right-stats score-board mobile-stats">
-      <div class="score-card timer-card">
-        <span class="score-label">剩余</span>
-        <strong id="timerText">60.0</strong>
+      <div class="hud right-stats score-board">
+        <div class="score-card timer-card">
+          <span class="score-label">剩余</span>
+          <strong id="timerText">60.0</strong>
+        </div>
+        <div class="score-card">
+          <span class="score-label">击碎</span>
+          <strong id="scoreText">0</strong>
+        </div>
+        <div class="score-card combo">
+          <span class="score-label">连击</span>
+          <strong id="comboText">x0</strong>
+        </div>
       </div>
-      <div class="score-card">
-        <span class="score-label">击碎</span>
-        <strong id="scoreText">0</strong>
-      </div>
-      <div class="score-card combo">
-        <span class="score-label">连击</span>
-        <strong id="comboText">x0</strong>
-      </div>
-      <div class="score-card mini-pill-row" id="miniStatsCard">
-        <span class="mini-pill">性能 <strong id="perfText">auto</strong></span>
-        <span class="mini-pill">反馈 <strong id="feedbackText">heavy</strong></span>
-      </div>
-    </div>
-
-    <div class="hud bottom-left debug-panel ${SHOW_DEBUG ? '' : 'hidden'}">
-      <pre id="debugText">初始化中...</pre>
     </div>
   </div>
 `
@@ -185,15 +168,10 @@ const refs: AppRefs = {
   statusText: document.querySelector('#statusText')!,
   hintText: document.querySelector('#hintText')!,
   startButton: document.querySelector('#startButton')!,
-  debugText: document.querySelector('#debugText')!,
-  perfText: document.querySelector('#perfText')!,
-  feedbackText: document.querySelector('#feedbackText')!,
   installButton: document.querySelector('#installButton')!,
   fullscreenButton: document.querySelector('#fullscreenButton')!,
   switchCameraButton: document.querySelector('#switchCameraButton')!,
   panelTitle: document.querySelector('#panelTitle')!,
-  panelDesc: document.querySelector('#panelDesc')!,
-  panelMeta: document.querySelector('#panelMeta')!,
   panelAction: document.querySelector('#panelAction')!,
   panel: document.querySelector('#panel')!,
   scoreText: document.querySelector('#scoreText')!,
@@ -201,7 +179,7 @@ const refs: AppRefs = {
   timerText: document.querySelector('#timerText')!,
   resultScore: document.querySelector('#resultScore')!,
   resultCombo: document.querySelector('#resultCombo')!,
-  miniStatsCard: document.querySelector('#miniStatsCard')!,
+  gameHud: document.querySelector('#gameHud')!,
 }
 
 const cameraCtx = refs.cameraCanvas.getContext('2d')!
@@ -224,7 +202,6 @@ let exitFrames = 0
 let gestureState: GestureState = 'OPEN'
 let justStartedFist = false
 let grabPoint = { x: window.innerWidth * 0.5, y: window.innerHeight * 0.5, visible: false }
-let handPresent = false
 let stream: MediaStream | null = null
 let currentFacingMode: CameraFacingMode = 'environment'
 let audioCtx: AudioContext | null = null
@@ -239,7 +216,6 @@ let comboCount = 0
 let bestCombo = 0
 let nextObjectId = 1
 let performanceTier: PerformanceTier = 'medium'
-let feedbackIntensity: FeedbackIntensity = 'heavy'
 let deferredInstallPrompt: DeferredInstallPrompt | null = null
 let frameSamples = 0
 let frameTimeSum = 0
@@ -254,20 +230,20 @@ const objects: Crushable[] = []
 const particles: Particle[] = []
 
 const config = {
-  smoothingAlpha: 0.74,
-  enterThreshold: 0.44,
-  holdThreshold: 0.4,
-  exitThreshold: 0.24,
+  smoothingAlpha: 0.8,
+  enterThreshold: 0.38,
+  holdThreshold: 0.34,
+  exitThreshold: 0.2,
   minEnterFrames: 1,
-  minExitFrames: 4,
+  minExitFrames: 5,
   particleBurst: 50,
-  hitPadding: 84,
-  lockRadius: 126,
-  easyCrushBoost: 20,
+  hitPadding: 96,
+  lockRadius: 138,
+  easyCrushBoost: 38,
   chargeRate: 1.25,
-  chargeBoostRate: 1.8,
+  chargeBoostRate: 2.1,
   chargeDecay: 1.4,
-  fistIntentBufferMs: 260,
+  fistIntentBufferMs: 340,
 }
 
 function resizeCanvases() {
@@ -290,21 +266,14 @@ function updateHint(text: string) {
   refs.hintText.textContent = text
 }
 
-function updatePanel(title: string, desc: string, meta: string, actionText: string) {
-  refs.panelTitle.textContent = title
-  refs.panelDesc.textContent = desc
-  refs.panelMeta.textContent = meta
-  refs.panelAction.textContent = actionText
-}
-
 function showPanel(show: boolean) {
   refs.panel.classList.toggle('hidden', !show)
+  refs.gameHud.classList.toggle('hidden', show)
 }
 
 function setRuntimeState(state: RuntimeState) {
   runtimeState = state
   showPanel(state !== 'running')
-  refs.miniStatsCard.classList.toggle('hidden', state === 'running')
 }
 
 function updateScoreBoard() {
@@ -329,81 +298,19 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value))
 }
 
-function detectPlatform() {
-  const ua = navigator.userAgent.toLowerCase()
-  return {
-    isiOS: /iphone|ipad|ipod/.test(ua),
-    isAndroid: /android/.test(ua),
-    isSafari: /safari/.test(ua) && !/chrome|android/.test(ua),
-  }
-}
-
-function isSecureRuntime() {
-  return window.isSecureContext || location.hostname === 'localhost' || location.hostname === '127.0.0.1'
-}
-
 function choosePerformanceTier(): PerformanceTier {
   const cores = navigator.hardwareConcurrency ?? 4
   const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 4
-  const shortSide = Math.min(window.innerWidth, window.innerHeight)
-  if (cores >= 8 && memory >= 6 && shortSide >= 430) return 'high'
+  if (cores >= 8 && memory >= 6) return 'high'
   if (cores <= 4 || memory <= 3) return 'low'
   return 'medium'
 }
 
 function applyPerformanceTier(tier: PerformanceTier) {
   performanceTier = tier
-  if (tier === 'high') {
-    detectIntervalMs = 22
-    config.particleBurst = 56
-    config.hitPadding = 92
-    config.lockRadius = 138
-  } else if (tier === 'medium') {
-    detectIntervalMs = 26
-    config.particleBurst = 50
-    config.hitPadding = 84
-    config.lockRadius = 126
-  } else {
-    detectIntervalMs = 36
-    config.particleBurst = 28
-    config.hitPadding = 72
-    config.lockRadius = 108
-  }
-
-  const { isiOS, isAndroid } = detectPlatform()
-  if (isiOS || isAndroid) {
-    config.smoothingAlpha = 0.8
-    config.enterThreshold = 0.38
-    config.holdThreshold = 0.34
-    config.exitThreshold = 0.2
-    config.minEnterFrames = 1
-    config.minExitFrames = 5
-    config.hitPadding += 18
-    config.lockRadius += 12
-    config.easyCrushBoost = 34
-    config.chargeBoostRate = 2.1
-    config.fistIntentBufferMs = 340
-  }
-
-  refs.perfText.textContent = tier
-}
-
-function chooseFeedbackIntensity(): FeedbackIntensity {
-  const { isiOS } = detectPlatform()
-  return isiOS ? 'medium' : 'heavy'
-}
-
-function getStartupMeta() {
-  const { isiOS, isAndroid, isSafari } = detectPlatform()
-  if (isiOS) {
-    return isSafari
-      ? '当前环境：iPhone / Safari · 已升级到 Three.js 真 3D 水果场景'
-      : '当前环境：iPhone · 建议改用 Safari 打开，兼容性最好'
-  }
-  if (isAndroid) {
-    return '当前环境：Android · 推荐使用 Chrome，当前版本已升级到 Three.js 真 3D 水果场景'
-  }
-  return '当前环境：桌面或其他浏览器 · 真机测试请用手机 HTTPS 链接打开'
+  if (tier === 'high') detectIntervalMs = 22
+  else if (tier === 'medium') detectIntervalMs = 26
+  else detectIntervalMs = 34
 }
 
 function resetRoundStats() {
@@ -426,24 +333,21 @@ function finishRound() {
   runtimeState = 'ended'
   lockedTargetId = null
   lockCharge = 0
-  showPanel(true)
   refs.resultScore.textContent = `本局击碎：${crushCount}`
   refs.resultCombo.textContent = `最高连击：x${bestCombo}`
   refs.resultScore.classList.remove('hidden')
   refs.resultCombo.classList.remove('hidden')
-  updatePanel('挑战结束', '这一版已经升级到 Three.js 真 3D 水果场景、飞溅特效和分层音效。', '如果继续打磨，下一步可以接入真正的 glTF 水果模型。', '再来一局')
-  refs.startButton.disabled = false
-  refs.panelAction.disabled = false
-  refs.startButton.textContent = '重新开始'
-  refs.panelAction.textContent = '再来一局'
+  refs.panelTitle.textContent = '再来一局？'
+  refs.panelAction.textContent = '开始游戏'
   updateStatus('挑战结束')
-  updateHint('点击“再来一局”重新开始 60 秒挑战。')
+  updateHint('点击开始游戏继续')
+  showPanel(true)
 }
 
 function getDeviceFruitScale() {
   const shortSide = Math.min(window.innerWidth, window.innerHeight)
-  if (shortSide <= 430) return 0.28
-  if (shortSide <= 540) return 0.4
+  if (shortSide <= 430) return 0.3
+  if (shortSide <= 540) return 0.42
   if (shortSide <= 768) return 0.62
   return 0.82
 }
@@ -458,7 +362,7 @@ function isValidSpawn(baseX: number, baseY: number, radius: number) {
   return objects.every((item) => {
     if (item.crushed) return true
     const dist = Math.hypot(item.baseX - baseX, item.baseY - baseY)
-    return dist >= item.radius + radius + 72
+    return dist >= item.radius + radius + 40
   })
 }
 
@@ -466,7 +370,7 @@ function createFruitVisual(spriteIndex: number, radius: number) {
   const scale = getDeviceFruitScale()
   return threeScene.createFruit(
     fruitTextures[spriteIndex],
-    radius * 0.038 * scale,
+    Math.max(0.26, radius * 0.05 * scale),
     JUICE_COLORS[spriteIndex % JUICE_COLORS.length],
     spriteIndex,
   )
@@ -475,22 +379,22 @@ function createFruitVisual(spriteIndex: number, radius: number) {
 function spawnObject(): Crushable {
   const deviceScale = getDeviceFruitScale()
   const margin = 54
-  const hudTop = Math.min(window.innerHeight * 0.18, 132)
-  const hudRight = Math.min(window.innerWidth * 0.16, 88)
+  const hudTop = Math.min(window.innerHeight * 0.16, 122)
+  const hudRight = Math.min(window.innerWidth * 0.14, 84)
   let attempts = 0
-  let radius = randomBetween(24, 34) * deviceScale
+  let radius = randomBetween(34, 48) * deviceScale
   let baseX = 0
   let baseY = 0
   do {
-    radius = randomBetween(24, 34) * deviceScale
+    radius = randomBetween(34, 48) * deviceScale
     baseX = randomBetween(margin, window.innerWidth - margin - hudRight)
-    baseY = randomBetween(hudTop, window.innerHeight - margin - 110)
+    baseY = randomBetween(hudTop, window.innerHeight - margin - 94)
     attempts += 1
   } while (attempts < 120 && !isValidSpawn(baseX, baseY, radius))
 
   const spriteIndex = Math.floor(Math.random() * fruitTextures.length)
   const visual = createFruitVisual(spriteIndex, radius)
-  const baseZ = randomBetween(-1.6, 1.4)
+  const baseZ = randomBetween(-1.2, 0.8)
 
   return {
     id: nextObjectId++,
@@ -503,23 +407,23 @@ function spawnObject(): Crushable {
     respawnAt: 0,
     pulse: 0,
     driftAngle: randomBetween(0, Math.PI * 2),
-    driftSpeed: randomBetween(0.2, 0.45),
-    driftRadius: randomBetween(10, 18),
+    driftSpeed: randomBetween(0.18, 0.34),
+    driftRadius: randomBetween(8, 14),
     baseX,
     baseY,
     baseZ,
     roll: randomBetween(0, Math.PI * 2),
-    rollSpeed: randomBetween(0.5, 0.9),
+    rollSpeed: randomBetween(0.28, 0.46),
     yaw: randomBetween(-0.8, 0.8),
-    yawSpeed: randomBetween(0.5, 0.85),
+    yawSpeed: randomBetween(0.2, 0.4),
     tilt: randomBetween(-0.45, 0.45),
-    tiltSpeed: randomBetween(0.35, 0.7),
+    tiltSpeed: randomBetween(0.16, 0.3),
     screenX: baseX,
     screenY: baseY,
-    screenRadius: radius,
+    screenRadius: Math.max(34, radius),
     splitProgress: 0,
-    splitDirX: randomBetween(0.8, 1.2) * (Math.random() > 0.5 ? 1 : -1),
-    splitDirY: randomBetween(0.4, 0.9),
+    splitDirX: 1,
+    splitDirY: 1,
     visual,
   }
 }
@@ -544,72 +448,60 @@ function respawnObject(target: Crushable) {
   if (target.visual) threeScene.removeFruit(target.visual)
   const replacement = spawnObject()
   Object.assign(target, replacement)
-  target.splitProgress = 0
 }
 
 function syncObjectVisual(item: Crushable, now: number) {
   if (!item.visual) return
   const world = getWorldFromScreen(item.x, item.y, item.z)
   item.visual.group.position.set(world.x, world.y, world.z)
-  item.visual.group.rotation.set(item.tilt * 0.35 + Math.cos(item.roll * 0.85) * 0.08, item.yaw * 0.22 + Math.sin(item.roll * 0.8) * 0.1, item.roll * 0.24)
-  const scale = 1 + item.pulse * 0.18
-  item.visual.group.scale.setScalar(scale)
-  ;(item.visual.glow.material as THREE.MeshBasicMaterial).opacity = item.id === lockedTargetId ? 0.34 + Math.sin(now / 140) * 0.08 : 0
-
-  const split = item.splitProgress
-  item.visual.body.visible = !item.crushed
-  item.visual.shell.visible = !item.crushed
+  item.visual.group.rotation.set(item.tilt * 0.2, item.yaw * 0.15, item.roll * 0.14)
+  const burst = item.crushed ? 1 + item.splitProgress * 0.22 : 1 + item.pulse * 0.12
+  const squashY = item.crushed ? 1 - item.splitProgress * 0.36 : 1
+  item.visual.group.scale.set(burst, squashY, 1)
+  item.visual.body.visible = true
+  item.visual.shell.visible = true
   item.visual.leftHalf.visible = false
   item.visual.rightHalf.visible = false
   item.visual.leftCut.visible = false
   item.visual.rightCut.visible = false
   if (item.visual.stem) item.visual.stem.visible = !item.crushed
   if (item.visual.leaf) item.visual.leaf.visible = !item.crushed
+  ;(item.visual.glow.material as THREE.MeshBasicMaterial).opacity = item.id === lockedTargetId ? 0.28 + Math.sin(now / 140) * 0.08 : 0
 
-  if (item.crushed) {
-    const squashX = 1 + split * 0.28
-    const squashY = 1 - split * 0.42
-    const burstZ = 1 + split * 0.18
-    item.visual.body.visible = true
-    item.visual.shell.visible = true
-    item.visual.body.scale.set(squashX, squashY, 1)
-    item.visual.shell.scale.set(squashX * 1.04, squashY * 1.04, burstZ)
-    item.visual.body.position.set(0, -split * split * 0.12, split * 0.04)
-    item.visual.shell.position.set(0, -split * split * 0.12, -0.02)
-  } else {
-    item.visual.body.scale.set(1, 1, 1)
-    item.visual.shell.scale.set(1, 1, 1)
-    item.visual.body.position.set(0, 0, 0)
-    item.visual.shell.position.set(0, 0, -0.02)
-  }
+  item.visual.body.position.set(0, item.crushed ? item.splitProgress * 0.08 : 0, 0.04)
+  item.visual.shell.position.set(0, item.crushed ? item.splitProgress * 0.08 : 0, -0.02)
 
   const screen = threeScene.projectToScreen(item.visual.group.position)
   item.screenX = screen.x
   item.screenY = screen.y
-  item.screenRadius = Math.max(32, item.radius * (1.18 + (0.6 - item.z) * 0.04))
+  item.screenRadius = Math.max(44, item.radius * 1.8)
 }
 
 function updateObjectMotion(dt: number) {
   const now = performance.now()
   for (const item of objects) {
-    if (item.crushed) continue
-    item.driftAngle += item.driftSpeed * dt
-    item.roll += item.rollSpeed * dt
-    item.yaw += Math.sin(item.roll * 0.8) * item.yawSpeed * dt * 0.35
-    item.tilt += Math.cos(item.roll * 0.95) * item.tiltSpeed * dt * 0.22
-    item.x = item.baseX + Math.cos(item.driftAngle) * item.driftRadius
-    item.y = item.baseY + Math.sin(item.driftAngle * 0.8) * item.driftRadius * 0.75
+    if (!item.crushed) {
+      item.driftAngle += item.driftSpeed * dt
+      item.roll += item.rollSpeed * dt
+      item.yaw += Math.sin(item.roll * 0.8) * item.yawSpeed * dt * 0.2
+      item.tilt += Math.cos(item.roll * 0.95) * item.tiltSpeed * dt * 0.18
+      item.x = item.baseX + Math.cos(item.driftAngle) * item.driftRadius
+      item.y = item.baseY + Math.sin(item.driftAngle * 0.8) * item.driftRadius * 0.7
+    }
     syncObjectVisual(item, now)
   }
 }
 
 function getPalmCenter(landmarks: NormalizedLandmark[]) {
   const ids = [0, 5, 9, 13, 17]
-  const sum = ids.reduce((acc, idx) => {
-    acc.x += landmarks[idx].x
-    acc.y += landmarks[idx].y
-    return acc
-  }, { x: 0, y: 0 })
+  const sum = ids.reduce(
+    (acc, idx) => {
+      acc.x += landmarks[idx].x
+      acc.y += landmarks[idx].y
+      return acc
+    },
+    { x: 0, y: 0 },
+  )
   return { x: sum.x / ids.length, y: sum.y / ids.length }
 }
 
@@ -685,30 +577,25 @@ function getAudioOutput() {
   return masterCompression ?? audioCtx?.destination ?? null
 }
 
-function playOscLayer(now: number, type: OscillatorType, startFreq: number, endFreq: number, gainPeak: number, duration: number, q = 0.8) {
+function playOscLayer(now: number, type: OscillatorType, startFreq: number, endFreq: number, gainPeak: number, duration: number) {
   if (!audioCtx) return
   const output = getAudioOutput()
   if (!output) return
   const osc = audioCtx.createOscillator()
   const gain = audioCtx.createGain()
-  const filter = audioCtx.createBiquadFilter()
   osc.type = type
   osc.frequency.setValueAtTime(startFreq, now)
   osc.frequency.exponentialRampToValueAtTime(Math.max(endFreq, 20), now + duration)
-  filter.type = 'lowpass'
-  filter.frequency.setValueAtTime(3200, now)
-  filter.Q.value = q
   gain.gain.setValueAtTime(0.0001, now)
   gain.gain.exponentialRampToValueAtTime(gainPeak, now + 0.01)
   gain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
-  osc.connect(filter)
-  filter.connect(gain)
+  osc.connect(gain)
   gain.connect(output)
   osc.start(now)
   osc.stop(now + duration + 0.02)
 }
 
-function playNoiseBurst(now: number, duration: number, peak: number, lowpass: number, bandpass: number) {
+function playNoiseBurst(now: number, duration: number, peak: number) {
   if (!audioCtx) return
   const output = getAudioOutput()
   if (!output) return
@@ -716,21 +603,12 @@ function playNoiseBurst(now: number, duration: number, peak: number, lowpass: nu
   const data = buffer.getChannelData(0)
   for (let i = 0; i < data.length; i += 1) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length)
   const source = audioCtx.createBufferSource()
-  const bp = audioCtx.createBiquadFilter()
-  const lp = audioCtx.createBiquadFilter()
   const gain = audioCtx.createGain()
   source.buffer = buffer
-  bp.type = 'bandpass'
-  bp.frequency.value = bandpass
-  bp.Q.value = 0.7
-  lp.type = 'lowpass'
-  lp.frequency.value = lowpass
   gain.gain.setValueAtTime(0.0001, now)
   gain.gain.exponentialRampToValueAtTime(peak, now + 0.008)
   gain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
-  source.connect(bp)
-  bp.connect(lp)
-  lp.connect(gain)
+  source.connect(gain)
   gain.connect(output)
   source.start(now)
 }
@@ -738,28 +616,21 @@ function playNoiseBurst(now: number, duration: number, peak: number, lowpass: nu
 function playCrushSound() {
   if (!audioCtx) return
   const now = audioCtx.currentTime
-  const heavy = feedbackIntensity === 'heavy'
-  playOscLayer(now, 'triangle', 180, 58, heavy ? 0.22 : 0.14, 0.22)
-  playOscLayer(now + 0.015, 'triangle', 124, 72, heavy ? 0.14 : 0.09, 0.18)
-  playOscLayer(now + 0.03, 'sine', 680, 220, heavy ? 0.05 : 0.03, 0.11)
-  playOscLayer(now + 0.055, 'square', 420, 130, heavy ? 0.08 : 0.05, 0.12)
-  playNoiseBurst(now + 0.004, 0.08, heavy ? 0.08 : 0.05, 1800, 650)
-  playNoiseBurst(now + 0.045, 0.14, heavy ? 0.065 : 0.045, 1400, 420)
-  playNoiseBurst(now + 0.09, 0.18, heavy ? 0.04 : 0.03, 1000, 260)
+  playOscLayer(now, 'triangle', 180, 62, 0.18, 0.2)
+  playOscLayer(now + 0.02, 'square', 320, 120, 0.08, 0.1)
+  playNoiseBurst(now + 0.01, 0.09, 0.06)
 }
 
 function triggerHaptics() {
   if (typeof navigator.vibrate !== 'function') return
-  if (feedbackIntensity === 'heavy') navigator.vibrate([14, 10, 18, 10, 24, 18, 12])
-  else if (feedbackIntensity === 'medium') navigator.vibrate([12, 12, 18])
-  else navigator.vibrate(18)
+  navigator.vibrate([14, 10, 18])
 }
 
 function createJuiceBurst(target: Crushable) {
   const splashHue = [8, 18, 38, 102, 352][target.spriteIndex % 5] ?? randomBetween(0, 360)
   for (let i = 0; i < config.particleBurst; i += 1) {
     const angle = randomBetween(-Math.PI * 0.95, Math.PI * 0.95)
-    const speed = randomBetween(140, feedbackIntensity === 'heavy' ? 540 : 360)
+    const speed = randomBetween(140, 420)
     particles.push({
       x: target.screenX,
       y: target.screenY,
@@ -777,45 +648,14 @@ function createJuiceBurst(target: Crushable) {
       rotation: randomBetween(0, Math.PI * 2),
     })
   }
-  for (let i = 0; i < 8; i += 1) {
-    particles.push({
-      x: randomBetween(window.innerWidth * 0.12, window.innerWidth * 0.88),
-      y: randomBetween(window.innerHeight * 0.08, window.innerHeight * 0.3),
-      vx: randomBetween(-40, 40),
-      vy: randomBetween(40, 120),
-      life: randomBetween(0.28, 0.5),
-      maxLife: randomBetween(0.28, 0.5),
-      size: randomBetween(20, 44),
-      hue: splashHue + randomBetween(-10, 10),
-      alpha: randomBetween(0.12, 0.24),
-      kind: 'screen',
-      stretch: randomBetween(1.4, 2.3),
-      gravity: randomBetween(40, 110),
-      spin: randomBetween(-2, 2),
-      rotation: randomBetween(0, Math.PI * 2),
-    })
-  }
 }
 
 function emitCrush(target: Crushable) {
   if (runtimeState !== 'running') return
   target.crushed = true
-  target.respawnAt = performance.now() + 620
+  target.respawnAt = performance.now() + 420
   target.pulse = 1.3
   target.splitProgress = 0.01
-  target.splitDirX = (grabPoint.x - target.screenX) >= 0 ? -1 : 1
-  target.splitDirY = randomBetween(0.5, 0.95)
-  if (target.visual) {
-    target.visual.group.visible = true
-    target.visual.body.visible = true
-    target.visual.shell.visible = true
-    target.visual.leftHalf.visible = false
-    target.visual.rightHalf.visible = false
-    target.visual.leftCut.visible = false
-    target.visual.rightCut.visible = false
-    if (target.visual.stem) target.visual.stem.visible = false
-    if (target.visual.leaf) target.visual.leaf.visible = false
-  }
   crushCount += 1
   comboCount = comboTimer > 0 ? comboCount + 1 : 1
   bestCombo = Math.max(bestCombo, comboCount)
@@ -823,8 +663,8 @@ function emitCrush(target: Crushable) {
   lockedTargetId = null
   lockCharge = 0
   updateScoreBoard()
-  flashTimer = feedbackIntensity === 'heavy' ? 170 : 130
-  shakeTimer = feedbackIntensity === 'heavy' ? 160 : 110
+  flashTimer = 140
+  shakeTimer = 120
   playCrushSound()
   triggerHaptics()
   createJuiceBurst(target)
@@ -843,7 +683,7 @@ function updateTargetLock() {
   const current = findLockedTarget()
   if (current) {
     const currentDist = Math.hypot(current.screenX - grabPoint.x, current.screenY - grabPoint.y)
-    if (currentDist <= current.screenRadius + config.lockRadius + 22) return
+    if (currentDist <= current.screenRadius + 50) return
   }
 
   let best: Crushable | undefined
@@ -857,7 +697,6 @@ function updateTargetLock() {
     }
   }
   lockedTargetId = best?.id ?? null
-  if (!best) lockCharge = 0
 }
 
 function updateLockCharge(dt: number) {
@@ -871,7 +710,7 @@ function updateLockCharge(dt: number) {
   const closeFactor = clamp(1 - dist / Math.max(nearRadius, 1), 0, 1)
   const gestureBoost = gestureState === 'FIST_HOLD' ? 1 : 0
   const chargeRate = config.chargeRate * (0.5 + closeFactor * 0.8) + gestureBoost * config.chargeBoostRate
-  if (dist <= nearRadius + 42) lockCharge = clamp(lockCharge + dt * chargeRate, 0, LOCK_CHARGE_MAX)
+  if (dist <= nearRadius + 46) lockCharge = clamp(lockCharge + dt * chargeRate, 0, LOCK_CHARGE_MAX)
   else lockCharge = Math.max(0, lockCharge - dt * config.chargeDecay)
 }
 
@@ -881,12 +720,11 @@ function detectHit() {
   if (!locked) return
   const now = performance.now()
   const dist = Math.hypot(locked.screenX - grabPoint.x, locked.screenY - grabPoint.y)
-  const easyRadius = locked.screenRadius + config.hitPadding + config.easyCrushBoost + 56
+  const easyRadius = locked.screenRadius + config.hitPadding + config.easyCrushBoost
   const cooldownReady = now - lastCrushAt >= CRUSH_COOLDOWN_MS
   const fistIntentActive = justStartedFist || (now - lastFistStartAt <= config.fistIntentBufferMs)
   const canTriggerThisFist = fistIntentActive && fistReleasedSinceLastCrush && cooldownReady
-  const readyToCrush = gestureState === 'FIST_HOLD'
-  if (dist <= easyRadius && readyToCrush && canTriggerThisFist) {
+  if (dist <= easyRadius && canTriggerThisFist && gestureState === 'FIST_HOLD') {
     lastCrushAt = now
     fistReleasedSinceLastCrush = false
     emitCrush(locked)
@@ -903,7 +741,7 @@ function drawCameraLayer() {
   cameraCtx.scale(-1, 1)
   cameraCtx.drawImage(refs.video, 0, 0, w, h)
   cameraCtx.restore()
-  cameraCtx.fillStyle = 'rgba(255,255,255,0.08)'
+  cameraCtx.fillStyle = 'rgba(255,255,255,0.06)'
   cameraCtx.fillRect(0, 0, w, h)
 }
 
@@ -986,7 +824,7 @@ function drawVirtualHand() {
 }
 
 function drawParticles(dt: number) {
-  const maxParticles = performanceTier === 'high' ? 260 : performanceTier === 'medium' ? 180 : 100
+  const maxParticles = performanceTier === 'high' ? 220 : performanceTier === 'medium' ? 160 : 90
   if (particles.length > maxParticles) particles.splice(0, particles.length - maxParticles)
   for (let i = particles.length - 1; i >= 0; i -= 1) {
     const particle = particles[i]
@@ -1004,16 +842,10 @@ function drawParticles(dt: number) {
     overlayCtx.save()
     overlayCtx.translate(particle.x, particle.y)
     overlayCtx.rotate(particle.rotation)
-    overlayCtx.fillStyle = `hsla(${particle.hue} 92% ${particle.kind === 'screen' ? 60 : 56}% / ${alpha})`
+    overlayCtx.fillStyle = `hsla(${particle.hue} 92% 58% / ${alpha})`
     overlayCtx.beginPath()
-    overlayCtx.ellipse(0, 0, particle.size * particle.stretch, particle.size * (particle.kind === 'screen' ? 0.46 : 0.62), 0, 0, Math.PI * 2)
+    overlayCtx.ellipse(0, 0, particle.size * particle.stretch, particle.size * 0.58, 0, 0, Math.PI * 2)
     overlayCtx.fill()
-    if (particle.kind === 'pulp') {
-      overlayCtx.fillStyle = `hsla(${particle.hue + 16} 90% 78% / ${alpha * 0.86})`
-      overlayCtx.beginPath()
-      overlayCtx.arc(0, 0, particle.size * 0.28, 0, Math.PI * 2)
-      overlayCtx.fill()
-    }
     overlayCtx.restore()
   }
 }
@@ -1021,36 +853,11 @@ function drawParticles(dt: number) {
 function drawOverlay() {
   overlayCtx.clearRect(0, 0, refs.overlayCanvas.width, refs.overlayCanvas.height)
   if (flashTimer > 0) {
-    overlayCtx.fillStyle = `rgba(255,255,255,${Math.min(flashTimer / 170, 0.36)})`
+    overlayCtx.fillStyle = `rgba(255,255,255,${Math.min(flashTimer / 140, 0.28)})`
     overlayCtx.fillRect(0, 0, refs.overlayCanvas.width, refs.overlayCanvas.height)
   }
   drawParticles(Math.min((performance.now() - lastFrameTs) / 1000, 0.033))
   drawVirtualHand()
-}
-
-function drawDebug() {
-  if (!SHOW_DEBUG) return
-  refs.debugText.textContent = [
-    `runtime: ${runtimeState}`,
-    `gestureState: ${gestureState}`,
-    `fistScore: ${fistScoreSmoothed.toFixed(3)}`,
-    `handPresent: ${handPresent}`,
-    `lockedTargetId: ${lockedTargetId ?? 'none'}`,
-    `lockCharge: ${lockCharge.toFixed(2)}`,
-    `objects: ${objects.filter((item) => !item.crushed).length}`,
-    `particles: ${particles.length}`,
-    `crushCount: ${crushCount}`,
-    `combo: ${comboCount}`,
-    `bestCombo: ${bestCombo}`,
-    `timeLeft: ${(roundTimeLeftMs / 1000).toFixed(2)}`,
-    `detectIntervalMs: ${detectIntervalMs}`,
-    `hitPadding: ${config.hitPadding}`,
-    `lockRadius: ${config.lockRadius}`,
-    `facingMode: ${currentFacingMode}`,
-    `tier: ${performanceTier}`,
-    `feedback: ${feedbackIntensity}`,
-    `secure: ${isSecureRuntime()}`,
-  ].join('\n')
 }
 
 function normalizeToScreen(point: { x: number; y: number }) {
@@ -1062,7 +869,6 @@ function normalizeToScreen(point: { x: number; y: number }) {
 
 function processDetection(result: HandLandmarkerResult | null) {
   const landmarks = result?.landmarks?.[0]
-  handPresent = Boolean(landmarks)
   if (!landmarks) {
     grabPoint.visible = false
     lockedTargetId = null
@@ -1085,29 +891,18 @@ function processDetection(result: HandLandmarkerResult | null) {
   updateGestureState(fistScoreSmoothed)
   if (justStartedFist) detectHit()
   if (runtimeState === 'running') {
-    const cooldownLeft = Math.max(0, CRUSH_COOLDOWN_MS - (performance.now() - lastCrushAt))
-    updateStatus(
-      lockedTargetId != null
-        ? gestureState === 'FIST_HOLD'
-          ? !fistReleasedSinceLastCrush
-            ? cooldownLeft > 0
-              ? `命中成功，冷却 ${(cooldownLeft / 1000).toFixed(1)}s，先松手再握`
-              : '先松手，再重新握拳触发下一次'
-            : lockCharge >= 0.48
-              ? '重新握拳可捏爆 3D 水果'
-              : '保持锁定，轻握也能识别'
-          : '已锁定，重新握拳才触发'
-        : '把手移到水果附近',
-    )
+    updateStatus(lockedTargetId != null ? '握拳抓爆！' : '移动到水果上')
+    updateHint(gestureState === 'FIST_HOLD' ? '松手再握一次也可以' : '重新握拳就能触发')
   }
 }
 
 async function setupHandTracking() {
-  updateStatus('加载手势识别模型...')
+  updateStatus('加载中...')
   const resolver = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm')
   handLandmarker = await HandLandmarker.createFromOptions(resolver, {
     baseOptions: {
-      modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+      modelAssetPath:
+        'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
       delegate: 'GPU',
     },
     runningMode: 'VIDEO',
@@ -1123,9 +918,15 @@ function stopCameraStream() {
 
 async function setupCamera() {
   if (!navigator.mediaDevices?.getUserMedia) throw new Error('当前浏览器不支持 getUserMedia')
-  updateStatus('请求相机权限...')
   stopCameraStream()
-  stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: currentFacingMode, width: { ideal: 640 }, height: { ideal: 480 } } })
+  stream = await navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: {
+      facingMode: currentFacingMode,
+      width: { ideal: 640 },
+      height: { ideal: 480 },
+    },
+  })
   refs.video.srcObject = stream
   await refs.video.play()
 }
@@ -1133,73 +934,22 @@ async function setupCamera() {
 async function toggleCameraFacingMode() {
   currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment'
   updateCameraButtonLabel()
-  try {
-    await setupCamera()
-  } catch (error) {
-    console.error(error)
-    currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment'
-    updateCameraButtonLabel()
-    await setupCamera()
-  }
+  await setupCamera()
 }
 
 async function toggleFullscreen() {
-  try {
-    if (!document.fullscreenElement) await document.documentElement.requestFullscreen()
-    else await document.exitFullscreen()
-  } catch (error) {
-    console.warn('Fullscreen toggle failed', error)
-  }
+  if (!document.fullscreenElement) await document.documentElement.requestFullscreen()
+  else await document.exitFullscreen()
   updateFullscreenLabel()
 }
 
-function handleVisibilityChange() {
-  if (document.hidden) stream?.getVideoTracks().forEach((track) => (track.enabled = false))
-  else stream?.getVideoTracks().forEach((track) => (track.enabled = true))
-}
-
-function describeStartupError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error)
-  if (!isSecureRuntime()) {
-    return {
-      title: '需要 HTTPS 才能启动相机',
-      desc: '当前页面不是安全上下文。请把项目部署到 https:// 域名后，再用手机打开试玩。',
-      meta: '推荐部署到 Cloudflare Pages / Netlify / Vercel，发布后直接把 HTTPS 链接发给别人。',
-    }
-  }
-  if (message.includes('Permission denied') || message.includes('NotAllowedError')) {
-    return {
-      title: '相机权限被拒绝',
-      desc: '请在浏览器地址栏或系统设置中允许相机权限，然后重新点击开始游戏。',
-      meta: 'iPhone 建议用 Safari；Android 建议用 Chrome。',
-    }
-  }
-  if (message.includes('getUserMedia')) {
-    return {
-      title: '当前浏览器不支持相机能力',
-      desc: '请换用较新的 Safari / Chrome 打开此页面。',
-      meta: '主流安卓 Chrome 与 iPhone Safari 兼容最好。',
-    }
-  }
-  return {
-    title: '启动失败',
-    desc: '初始化手势识别、Three.js 场景或相机时出错，请重试一次，或换浏览器/网络环境。',
-    meta: message,
-  }
-}
-
 async function startGame() {
-  refs.startButton.disabled = true
   refs.panelAction.disabled = true
-  refs.startButton.textContent = '启动中...'
-  refs.panelAction.textContent = '启动中...'
+  refs.panelAction.textContent = '加载中...'
   setRuntimeState('starting')
   try {
-    if (!isSecureRuntime()) throw new Error('Insecure context')
     audioCtx = audioCtx ?? new AudioContext()
     if (audioCtx.state === 'suspended') await audioCtx.resume()
-    feedbackIntensity = chooseFeedbackIntensity()
-    refs.feedbackText.textContent = feedbackIntensity
     applyPerformanceTier(choosePerformanceTier())
     resizeCanvases()
     resetRoundStats()
@@ -1207,21 +957,16 @@ async function startGame() {
     if (!stream) await setupCamera()
     if (!handLandmarker) await setupHandTracking()
     setRuntimeState('running')
-    updateStatus('挑战开始')
-    updateHint('现在已改成更像水果道具的立体卡片模型；重新握拳碰到目标就更容易捏爆。')
-    refs.startButton.textContent = '挑战中'
-    refs.panelAction.textContent = '开始挑战'
+    updateStatus('把整只手放进画面里')
+    updateHint('移动到水果上，再重新握拳')
+    refs.panelAction.textContent = '开始游戏'
+    refs.panelAction.disabled = false
   } catch (error) {
     console.error(error)
-    const detail = describeStartupError(error)
-    setRuntimeState('error')
-    updateStatus('启动失败')
-    updateHint(detail.desc)
-    updatePanel(detail.title, detail.desc, detail.meta, '重试启动')
-    refs.startButton.disabled = false
+    refs.panelTitle.textContent = '启动失败'
+    refs.panelAction.textContent = '重试'
     refs.panelAction.disabled = false
-    refs.startButton.textContent = '重试启动'
-    refs.panelAction.textContent = '重试启动'
+    showPanel(true)
   }
 }
 
@@ -1230,6 +975,7 @@ function tick(ts: number) {
   lastFrameTs = ts
   frameSamples += 1
   frameTimeSum += dt
+
   if (frameSamples >= 120) {
     const avgFps = frameSamples / Math.max(frameTimeSum, 0.001)
     if (avgFps < 45 && performanceTier === 'high') applyPerformanceTier('medium')
@@ -1270,7 +1016,7 @@ function tick(ts: number) {
   updateObjectMotion(dt)
   for (const item of objects) {
     if (item.crushed) {
-      item.splitProgress = Math.min(1, item.splitProgress + dt * 3.8)
+      item.splitProgress = Math.min(1, item.splitProgress + dt * 4.6)
       if (ts >= item.respawnAt) {
         respawnObject(item)
         continue
@@ -1278,27 +1024,16 @@ function tick(ts: number) {
     } else {
       item.splitProgress = 0
     }
-    if (item.visual) item.visual.group.visible = true
     item.pulse = Math.max(0, item.pulse - dt * 3.2)
   }
 
   threeScene.render()
   drawOverlay()
-  drawDebug()
   requestAnimationFrame(tick)
-}
-
-function bindStartActions() {
-  const start = () => {
-    void startGame()
-  }
-  refs.startButton.addEventListener('click', start)
-  refs.panelAction.addEventListener('click', start)
 }
 
 window.addEventListener('resize', resizeCanvases)
 window.addEventListener('fullscreenchange', updateFullscreenLabel)
-document.addEventListener('visibilitychange', handleVisibilityChange)
 window.addEventListener('beforeinstallprompt', (event) => {
   event.preventDefault()
   deferredInstallPrompt = event as DeferredInstallPrompt
@@ -1316,6 +1051,9 @@ refs.fullscreenButton.addEventListener('click', () => {
 refs.switchCameraButton.addEventListener('click', () => {
   void toggleCameraFacingMode()
 })
+refs.panelAction.addEventListener('click', () => {
+  void startGame()
+})
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -1325,16 +1063,10 @@ if ('serviceWorker' in navigator) {
 
 threeScene.setBackground(backgroundTexture)
 applyPerformanceTier(choosePerformanceTier())
-feedbackIntensity = chooseFeedbackIntensity()
-refs.feedbackText.textContent = feedbackIntensity
 resizeCanvases()
 ensureObjects(MAX_OBJECTS)
 updateScoreBoard()
 updateFullscreenLabel()
 updateCameraButtonLabel()
-updatePanel('锁定 3D 水果，重新握拳再捏爆', '点击开始后授权相机，屏幕里的虚拟手会实时反映你的张手或抓手。先锁定 Three.js 3D 水果，再重新握拳，才能触发一次捏爆。', getStartupMeta(), '开始挑战')
-updateHint('这是移动端 Three.js 3D 版。水果会在立体场景中翻滚，必须先锁定目标，再重新握拳，且两次触发间隔 1 秒。')
-updateStatus('等待启动')
-setRuntimeState('idle')
-bindStartActions()
+showPanel(true)
 requestAnimationFrame(tick)
