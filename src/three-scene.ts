@@ -36,20 +36,15 @@ export function createThreeFruitScene(canvas: HTMLCanvasElement): ThreeFruitScen
   const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 100)
   camera.position.set(0, 0, 28)
 
-  const ambient = new THREE.AmbientLight(0xffffff, 1.45)
-  scene.add(ambient)
+  scene.add(new THREE.AmbientLight(0xffffff, 1.55))
 
   const keyLight = new THREE.DirectionalLight(0xfff4da, 1.8)
   keyLight.position.set(-4, 6, 10)
   scene.add(keyLight)
 
-  const fillLight = new THREE.DirectionalLight(0xb9d8ff, 1.1)
+  const fillLight = new THREE.DirectionalLight(0xb9d8ff, 1.2)
   fillLight.position.set(5, -2, 8)
   scene.add(fillLight)
-
-  const rimLight = new THREE.PointLight(0xffffff, 1.2, 40)
-  rimLight.position.set(0, 8, 10)
-  scene.add(rimLight)
 
   let backgroundMesh: THREE.Mesh | null = null
 
@@ -66,10 +61,31 @@ export function createThreeFruitScene(canvas: HTMLCanvasElement): ThreeFruitScen
 
     const geometry = new THREE.PlaneGeometry(28, 20)
     const material = new THREE.MeshBasicMaterial({ map: texture, depthWrite: false })
-    const plane = new THREE.Mesh(geometry, material)
-    plane.position.set(0, 0, -16)
-    scene.add(plane)
-    backgroundMesh = plane
+    backgroundMesh = new THREE.Mesh(geometry, material)
+    backgroundMesh.position.set(0, 0, -16)
+    scene.add(backgroundMesh)
+  }
+
+  function getFruitScale(variant: number) {
+    if (variant === 0) return { w: 1.06, h: 1.02 }
+    if (variant === 1) return { w: 0.92, h: 1.16 }
+    if (variant === 2) return { w: 1.2, h: 0.88 }
+    if (variant === 3) return { w: 0.72, h: 1.38 }
+    return { w: 1.18, h: 0.98 }
+  }
+
+  function createTexturedCard(texture: THREE.Texture, radius: number, variant: number) {
+    const { w, h } = getFruitScale(variant)
+    const geometry = new THREE.PlaneGeometry(radius * 2 * w, radius * 2 * h)
+    const material = new THREE.MeshPhysicalMaterial({
+      map: texture,
+      transparent: true,
+      alphaTest: 0.08,
+      roughness: 0.78,
+      metalness: 0,
+      side: THREE.DoubleSide,
+    })
+    return new THREE.Mesh(geometry, material)
   }
 
   function createFruit(texture: THREE.Texture, radius: number, juiceColor: number, variant: number): FruitVisual {
@@ -77,72 +93,48 @@ export function createThreeFruitScene(canvas: HTMLCanvasElement): ThreeFruitScen
     texture.needsUpdate = true
 
     const group = new THREE.Group()
-
-    const bodyGeometry = new THREE.SphereGeometry(radius, 48, 48)
-    if (variant === 0) bodyGeometry.scale(1.02, 0.92, 0.98)
-    else if (variant === 1) bodyGeometry.scale(0.9, 1.02, 0.9)
-    else if (variant === 2) bodyGeometry.scale(1.12, 0.78, 0.88)
-    else if (variant === 3) bodyGeometry.scale(0.7, 1.28, 0.72)
-    else bodyGeometry.scale(1.18, 0.84, 1.02)
-    const bodyMaterial = new THREE.MeshPhysicalMaterial({
-      map: texture,
-      roughness: 0.62,
-      metalness: 0.04,
-      clearcoat: 0.28,
-      clearcoatRoughness: 0.52,
-    })
-    const body = new THREE.Mesh(bodyGeometry, bodyMaterial)
+    const body = createTexturedCard(texture, radius, variant)
     group.add(body)
 
-    const halfMaterial = bodyMaterial.clone()
-    const leftHalf = new THREE.Mesh(bodyGeometry.clone(), halfMaterial)
+    const shell = createTexturedCard(texture, radius * 1.04, variant)
+    const shellMaterial = shell.material as THREE.MeshPhysicalMaterial
+    shellMaterial.opacity = 0.12
+    shellMaterial.clearcoat = 1
+    shellMaterial.clearcoatRoughness = 0.18
+    shellMaterial.color = new THREE.Color(0xffffff)
+    shell.position.z = -0.02
+    group.add(shell)
+
+    const leftHalf = createTexturedCard(texture, radius, variant)
     leftHalf.visible = false
     group.add(leftHalf)
 
-    const rightHalf = new THREE.Mesh(bodyGeometry.clone(), halfMaterial.clone())
+    const rightHalf = createTexturedCard(texture, radius, variant)
     rightHalf.visible = false
     group.add(rightHalf)
 
+    const { w, h } = getFruitScale(variant)
     const cutColor = new THREE.Color(juiceColor).lerp(new THREE.Color(0xffffff), 0.42)
-    const cutGeometry = new THREE.CircleGeometry(radius * 0.82, 40)
+    const cutGeometry = new THREE.PlaneGeometry(radius * 0.78 * h, radius * 1.6 * h)
     const cutMaterial = new THREE.MeshStandardMaterial({
       color: cutColor,
-      roughness: 0.86,
+      roughness: 0.82,
       metalness: 0,
       emissive: new THREE.Color(juiceColor).multiplyScalar(0.08),
+      side: THREE.DoubleSide,
     })
+
     const leftCut = new THREE.Mesh(cutGeometry, cutMaterial)
-    leftCut.position.x = radius * 0.02
-    leftCut.rotation.y = Math.PI / 2
     leftCut.visible = false
+    leftCut.position.x = -radius * 0.08 * w
     group.add(leftCut)
 
     const rightCut = new THREE.Mesh(cutGeometry.clone(), cutMaterial.clone())
-    rightCut.position.x = -radius * 0.02
-    rightCut.rotation.y = -Math.PI / 2
     rightCut.visible = false
+    rightCut.position.x = radius * 0.08 * w
     group.add(rightCut)
 
-    const shellGeometry = new THREE.SphereGeometry(radius * 1.03, 48, 48)
-    if (variant === 0) shellGeometry.scale(1.05, 0.95, 1)
-    else if (variant === 1) shellGeometry.scale(0.95, 1.05, 0.95)
-    else if (variant === 2) shellGeometry.scale(1.14, 0.82, 0.92)
-    else if (variant === 3) shellGeometry.scale(0.74, 1.34, 0.76)
-    else shellGeometry.scale(1.22, 0.88, 1.06)
-    const shellMaterial = new THREE.MeshPhysicalMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.1,
-      roughness: 0.08,
-      metalness: 0,
-      clearcoat: 1,
-      clearcoatRoughness: 0.12,
-      side: THREE.DoubleSide,
-    })
-    const shell = new THREE.Mesh(shellGeometry, shellMaterial)
-    group.add(shell)
-
-    const glowGeometry = new THREE.RingGeometry(radius * 1.18, radius * 1.28, 48)
+    const glowGeometry = new THREE.RingGeometry(radius * 1.1, radius * 1.18, 40)
     const glowMaterial = new THREE.MeshBasicMaterial({
       color: 0xffd86b,
       transparent: true,
@@ -152,54 +144,41 @@ export function createThreeFruitScene(canvas: HTMLCanvasElement): ThreeFruitScen
     })
     const glow = new THREE.Mesh(glowGeometry, glowMaterial)
     glow.rotation.x = -Math.PI / 2
-    glow.position.y = -radius * 0.92
+    glow.position.y = -radius * 0.9
     group.add(glow)
 
+    let stem: THREE.Mesh | undefined
+    let leaf: THREE.Mesh | undefined
     if (variant !== 3) {
-      const stem = new THREE.Mesh(
-        new THREE.CylinderGeometry(radius * 0.06, radius * 0.08, radius * 0.34, 10),
-        new THREE.MeshPhysicalMaterial({ color: variant === 2 ? 0x6d4c41 : 0x6b8f3e, roughness: 0.8 }),
+      stem = new THREE.Mesh(
+        new THREE.CylinderGeometry(radius * 0.035, radius * 0.05, radius * 0.22, 8),
+        new THREE.MeshStandardMaterial({ color: variant === 2 ? 0x7a5236 : 0x6b8f3e, roughness: 0.86 }),
       )
-      stem.position.y = radius * 0.9
-      stem.rotation.z = variant === 2 ? 0.5 : 0.2
+      stem.position.y = radius * h * 0.94
+      stem.position.z = 0.02
+      stem.rotation.z = variant === 2 ? 0.5 : 0.18
       group.add(stem)
 
-      const leaf = new THREE.Mesh(
-        new THREE.SphereGeometry(radius * 0.2, 16, 16),
-        new THREE.MeshPhysicalMaterial({ color: 0x5ca347, roughness: 0.84 }),
+      leaf = new THREE.Mesh(
+        new THREE.PlaneGeometry(radius * 0.42, radius * 0.22),
+        new THREE.MeshStandardMaterial({ color: 0x5ca347, roughness: 0.84, side: THREE.DoubleSide }),
       )
-      leaf.scale.set(1.3, 0.35, 0.75)
-      leaf.position.set(radius * 0.12, radius * 0.96, 0)
-      leaf.rotation.z = -0.5
+      leaf.position.set(radius * 0.12, radius * h * 0.98, 0.03)
+      leaf.rotation.z = -0.48
       group.add(leaf)
-      ;(group.userData as { stem?: THREE.Mesh; leaf?: THREE.Mesh }).stem = stem
-      ;(group.userData as { stem?: THREE.Mesh; leaf?: THREE.Mesh }).leaf = leaf
     } else {
-      const cap = new THREE.Mesh(
-        new THREE.ConeGeometry(radius * 0.18, radius * 0.38, 12),
-        new THREE.MeshPhysicalMaterial({ color: 0x3c8a3f, roughness: 0.9 }),
+      stem = new THREE.Mesh(
+        new THREE.ConeGeometry(radius * 0.12, radius * 0.24, 10),
+        new THREE.MeshStandardMaterial({ color: 0x3c8a3f, roughness: 0.9 }),
       )
-      cap.position.y = radius * 1.12
-      cap.rotation.z = 0.18
-      group.add(cap)
-      ;(group.userData as { stem?: THREE.Mesh; leaf?: THREE.Mesh }).stem = cap
+      stem.position.y = radius * h * 1.03
+      stem.position.z = 0.03
+      stem.rotation.z = 0.16
+      group.add(stem)
     }
 
     scene.add(group)
-    const extras = group.userData as { stem?: THREE.Mesh; leaf?: THREE.Mesh }
-    return {
-      group,
-      body,
-      shell,
-      glow,
-      leftHalf,
-      rightHalf,
-      leftCut,
-      rightCut,
-      stem: extras.stem,
-      leaf: extras.leaf,
-      juiceColor,
-    }
+    return { group, body, shell, glow, leftHalf, rightHalf, leftCut, rightCut, stem, leaf, juiceColor }
   }
 
   function removeFruit(fruit: FruitVisual) {

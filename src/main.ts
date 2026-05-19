@@ -551,48 +551,42 @@ function syncObjectVisual(item: Crushable, now: number) {
   if (!item.visual) return
   const world = getWorldFromScreen(item.x, item.y, item.z)
   item.visual.group.position.set(world.x, world.y, world.z)
-  item.visual.group.rotation.set(item.tilt + Math.cos(item.roll * 0.85) * 0.22, item.yaw + Math.sin(item.roll * 0.8) * 0.35, item.roll)
+  item.visual.group.rotation.set(item.tilt * 0.35 + Math.cos(item.roll * 0.85) * 0.08, item.yaw * 0.22 + Math.sin(item.roll * 0.8) * 0.1, item.roll * 0.24)
   const scale = 1 + item.pulse * 0.18
   item.visual.group.scale.setScalar(scale)
   ;(item.visual.glow.material as THREE.MeshBasicMaterial).opacity = item.id === lockedTargetId ? 0.34 + Math.sin(now / 140) * 0.08 : 0
 
   const split = item.splitProgress
-  const lift = split * item.radius * 0.06
   item.visual.body.visible = !item.crushed
   item.visual.shell.visible = !item.crushed
-  item.visual.leftHalf.visible = item.crushed
-  item.visual.rightHalf.visible = item.crushed
-  item.visual.leftCut.visible = item.crushed
-  item.visual.rightCut.visible = item.crushed
+  item.visual.leftHalf.visible = false
+  item.visual.rightHalf.visible = false
+  item.visual.leftCut.visible = false
+  item.visual.rightCut.visible = false
   if (item.visual.stem) item.visual.stem.visible = !item.crushed
   if (item.visual.leaf) item.visual.leaf.visible = !item.crushed
 
   if (item.crushed) {
-    const spread = split * 0.38 * item.splitDirX
-    const drop = split * split * 0.24 * item.splitDirY
-    item.visual.leftHalf.position.set(-spread, lift - drop, split * 0.08)
-    item.visual.rightHalf.position.set(spread, lift - drop, -split * 0.08)
-    item.visual.leftHalf.rotation.set(split * 1.25, split * -0.2, split * -1.8)
-    item.visual.rightHalf.rotation.set(split * -1.25, split * 0.2, split * 1.8)
-    item.visual.leftCut.position.set(-spread * 0.92, lift - drop, split * 0.085)
-    item.visual.rightCut.position.set(spread * 0.92, lift - drop, -split * 0.085)
-    item.visual.leftCut.rotation.set(0, Math.PI / 2, split * -1.8)
-    item.visual.rightCut.rotation.set(0, -Math.PI / 2, split * 1.8)
+    const squashX = 1 + split * 0.28
+    const squashY = 1 - split * 0.42
+    const burstZ = 1 + split * 0.18
+    item.visual.body.visible = true
+    item.visual.shell.visible = true
+    item.visual.body.scale.set(squashX, squashY, 1)
+    item.visual.shell.scale.set(squashX * 1.04, squashY * 1.04, burstZ)
+    item.visual.body.position.set(0, -split * split * 0.12, split * 0.04)
+    item.visual.shell.position.set(0, -split * split * 0.12, -0.02)
   } else {
-    item.visual.leftHalf.position.set(0, 0, 0)
-    item.visual.rightHalf.position.set(0, 0, 0)
-    item.visual.leftCut.position.set(0, 0, 0)
-    item.visual.rightCut.position.set(0, 0, 0)
-    item.visual.leftHalf.rotation.set(0, 0, 0)
-    item.visual.rightHalf.rotation.set(0, 0, 0)
-    item.visual.leftCut.rotation.set(0, Math.PI / 2, 0)
-    item.visual.rightCut.rotation.set(0, -Math.PI / 2, 0)
+    item.visual.body.scale.set(1, 1, 1)
+    item.visual.shell.scale.set(1, 1, 1)
+    item.visual.body.position.set(0, 0, 0)
+    item.visual.shell.position.set(0, 0, -0.02)
   }
 
   const screen = threeScene.projectToScreen(item.visual.group.position)
   item.screenX = screen.x
   item.screenY = screen.y
-  item.screenRadius = item.radius * (0.48 + (0.8 - item.z) * 0.012)
+  item.screenRadius = Math.max(32, item.radius * (1.18 + (0.6 - item.z) * 0.04))
 }
 
 function updateObjectMotion(dt: number) {
@@ -813,12 +807,12 @@ function emitCrush(target: Crushable) {
   target.splitDirY = randomBetween(0.5, 0.95)
   if (target.visual) {
     target.visual.group.visible = true
-    target.visual.body.visible = false
-    target.visual.shell.visible = false
-    target.visual.leftHalf.visible = true
-    target.visual.rightHalf.visible = true
-    target.visual.leftCut.visible = true
-    target.visual.rightCut.visible = true
+    target.visual.body.visible = true
+    target.visual.shell.visible = true
+    target.visual.leftHalf.visible = false
+    target.visual.rightHalf.visible = false
+    target.visual.leftCut.visible = false
+    target.visual.rightCut.visible = false
     if (target.visual.stem) target.visual.stem.visible = false
     if (target.visual.leaf) target.visual.leaf.visible = false
   }
@@ -876,8 +870,8 @@ function updateLockCharge(dt: number) {
   const nearRadius = locked.screenRadius + config.lockRadius
   const closeFactor = clamp(1 - dist / Math.max(nearRadius, 1), 0, 1)
   const gestureBoost = gestureState === 'FIST_HOLD' ? 1 : 0
-  const chargeRate = config.chargeRate * (0.4 + closeFactor * 0.7) + gestureBoost * config.chargeBoostRate * 0.9
-  if (dist <= nearRadius + 18) lockCharge = clamp(lockCharge + dt * chargeRate, 0, LOCK_CHARGE_MAX)
+  const chargeRate = config.chargeRate * (0.5 + closeFactor * 0.8) + gestureBoost * config.chargeBoostRate
+  if (dist <= nearRadius + 42) lockCharge = clamp(lockCharge + dt * chargeRate, 0, LOCK_CHARGE_MAX)
   else lockCharge = Math.max(0, lockCharge - dt * config.chargeDecay)
 }
 
@@ -887,11 +881,11 @@ function detectHit() {
   if (!locked) return
   const now = performance.now()
   const dist = Math.hypot(locked.screenX - grabPoint.x, locked.screenY - grabPoint.y)
-  const easyRadius = locked.screenRadius + config.hitPadding + config.easyCrushBoost + 20
+  const easyRadius = locked.screenRadius + config.hitPadding + config.easyCrushBoost + 56
   const cooldownReady = now - lastCrushAt >= CRUSH_COOLDOWN_MS
   const fistIntentActive = justStartedFist || (now - lastFistStartAt <= config.fistIntentBufferMs)
   const canTriggerThisFist = fistIntentActive && fistReleasedSinceLastCrush && cooldownReady
-  const readyToCrush = gestureState === 'FIST_HOLD' && lockCharge >= 0.48
+  const readyToCrush = gestureState === 'FIST_HOLD'
   if (dist <= easyRadius && readyToCrush && canTriggerThisFist) {
     lastCrushAt = now
     fistReleasedSinceLastCrush = false
@@ -1214,7 +1208,7 @@ async function startGame() {
     if (!handLandmarker) await setupHandTracking()
     setRuntimeState('running')
     updateStatus('挑战开始')
-    updateHint('现在已升级为 Three.js 真 3D 水果场景；手机端握拳识别已进一步放宽，且只有重新握拳命中目标才会捏爆。')
+    updateHint('现在已改成更像水果道具的立体卡片模型；重新握拳碰到目标就更容易捏爆。')
     refs.startButton.textContent = '挑战中'
     refs.panelAction.textContent = '开始挑战'
   } catch (error) {
