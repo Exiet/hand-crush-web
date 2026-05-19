@@ -93,9 +93,22 @@ video {
   align-items: flex-end;
 }
 
-.right-stats {
-  right: max(12px, env(safe-area-inset-right));
-  top: 96px;
+.top-bar-row {
+  top: max(10px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(92vw, 560px);
+  flex-direction: row;
+  justify-content: center;
+  gap: 10px;
+}
+
+.below-top-bar {
+  top: calc(max(10px, env(safe-area-inset-top)) + 86px);
+}
+
+.controls-offset {
+  top: calc(max(10px, env(safe-area-inset-top)) + 86px);
 }
 
 .mobile-stack {
@@ -253,6 +266,11 @@ video {
   text-align: center;
 }
 
+.compact-top-card {
+  min-width: 94px;
+  flex: 1 1 0;
+}
+
 .score-card strong {
   display: block;
   font-size: 24px;
@@ -271,10 +289,9 @@ video {
 }
 
 @media (max-width: 720px) {
-  .right-stats {
-    right: max(10px, env(safe-area-inset-right));
-    top: auto;
-    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 68px);
+  .top-bar-row {
+    width: min(94vw, 94vw);
+    gap: 8px;
   }
 
   .score-card {
@@ -289,6 +306,11 @@ video {
   .hint {
     max-width: calc(100vw - 140px);
     font-size: 12px;
+  }
+
+  .below-top-bar,
+  .controls-offset {
+    top: calc(max(10px, env(safe-area-inset-top)) + 78px);
   }
 
   .start-button,

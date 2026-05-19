@@ -130,31 +130,31 @@ app.innerHTML = `
     </div>
 
     <div id="gameHud" class="hidden">
-      <div class="hud top-left">
+      <div class="hud top-bar-row">
+        <div class="score-card timer-card compact-top-card">
+          <span class="score-label">剩余</span>
+          <strong id="timerText">60.0</strong>
+        </div>
+        <div class="score-card compact-top-card">
+          <span class="score-label">击碎</span>
+          <strong id="scoreText">0</strong>
+        </div>
+        <div class="score-card combo compact-top-card">
+          <span class="score-label">连击</span>
+          <strong id="comboText">x0</strong>
+        </div>
+      </div>
+
+      <div class="hud top-left below-top-bar">
         <div id="statusText" class="status">把整只手放进画面里</div>
         <div id="hintText" class="hint">移动到水果上，再重新握拳</div>
       </div>
 
-      <div class="hud top-right mobile-stack">
+      <div class="hud top-right mobile-stack below-top-bar controls-offset">
         <button id="switchCameraButton" class="secondary-button">切后置</button>
         <button id="fullscreenButton" class="secondary-button">全屏</button>
         <button id="installButton" class="secondary-button hidden">安装</button>
         <button id="startButton" class="start-button hidden">开始</button>
-      </div>
-
-      <div class="hud right-stats score-board">
-        <div class="score-card timer-card">
-          <span class="score-label">剩余</span>
-          <strong id="timerText">60.0</strong>
-        </div>
-        <div class="score-card">
-          <span class="score-label">击碎</span>
-          <strong id="scoreText">0</strong>
-        </div>
-        <div class="score-card combo">
-          <span class="score-label">连击</span>
-          <strong id="comboText">x0</strong>
-        </div>
       </div>
     </div>
   </div>
@@ -346,10 +346,10 @@ function finishRound() {
 
 function getDeviceFruitScale() {
   const shortSide = Math.min(window.innerWidth, window.innerHeight)
-  if (shortSide <= 430) return 0.3
-  if (shortSide <= 540) return 0.42
-  if (shortSide <= 768) return 0.62
-  return 0.82
+  if (shortSide <= 430) return 0.72
+  if (shortSide <= 540) return 0.86
+  if (shortSide <= 768) return 0.96
+  return 1.04
 }
 
 function getWorldFromScreen(baseX: number, baseY: number, baseZ: number) {
@@ -370,7 +370,7 @@ function createFruitVisual(spriteIndex: number, radius: number) {
   const scale = getDeviceFruitScale()
   return threeScene.createFruit(
     fruitTextures[spriteIndex],
-    Math.max(0.26, radius * 0.05 * scale),
+    Math.max(0.62, radius * 0.12 * scale),
     JUICE_COLORS[spriteIndex % JUICE_COLORS.length],
     spriteIndex,
   )
@@ -382,11 +382,11 @@ function spawnObject(): Crushable {
   const hudTop = Math.min(window.innerHeight * 0.16, 122)
   const hudRight = Math.min(window.innerWidth * 0.14, 84)
   let attempts = 0
-  let radius = randomBetween(34, 48) * deviceScale
+  let radius = randomBetween(42, 58) * deviceScale
   let baseX = 0
   let baseY = 0
   do {
-    radius = randomBetween(34, 48) * deviceScale
+    radius = randomBetween(42, 58) * deviceScale
     baseX = randomBetween(margin, window.innerWidth - margin - hudRight)
     baseY = randomBetween(hudTop, window.innerHeight - margin - 94)
     attempts += 1
@@ -455,8 +455,8 @@ function syncObjectVisual(item: Crushable, now: number) {
   const world = getWorldFromScreen(item.x, item.y, item.z)
   item.visual.group.position.set(world.x, world.y, world.z)
   item.visual.group.rotation.set(item.tilt * 0.2, item.yaw * 0.15, item.roll * 0.14)
-  const burst = item.crushed ? 1 + item.splitProgress * 0.22 : 1 + item.pulse * 0.12
-  const squashY = item.crushed ? 1 - item.splitProgress * 0.36 : 1
+  const burst = item.crushed ? 1 + item.splitProgress * 0.12 : 1 + item.pulse * 0.08
+  const squashY = item.crushed ? 1 - item.splitProgress * 0.18 : 1
   item.visual.group.scale.set(burst, squashY, 1)
   item.visual.body.visible = true
   item.visual.shell.visible = true
@@ -474,7 +474,7 @@ function syncObjectVisual(item: Crushable, now: number) {
   const screen = threeScene.projectToScreen(item.visual.group.position)
   item.screenX = screen.x
   item.screenY = screen.y
-  item.screenRadius = Math.max(44, item.radius * 1.8)
+  item.screenRadius = Math.max(54, item.radius * 1.56)
 }
 
 function updateObjectMotion(dt: number) {
