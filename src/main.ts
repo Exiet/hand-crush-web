@@ -303,6 +303,10 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value))
 }
 
+function isDesktopMode() {
+  return pointerMode
+}
+
 function choosePerformanceTier(): PerformanceTier {
   const cores = navigator.hardwareConcurrency ?? 4
   const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 4
@@ -935,14 +939,22 @@ function stopCameraStream() {
 async function setupCamera() {
   if (!navigator.mediaDevices?.getUserMedia) throw new Error('当前浏览器不支持 getUserMedia')
   stopCameraStream()
-  stream = await navigator.mediaDevices.getUserMedia({
-    audio: false,
-    video: {
-      facingMode: currentFacingMode,
-      width: { ideal: 640 },
-      height: { ideal: 480 },
-    },
-  })
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        facingMode: currentFacingMode,
+        width: { ideal: 640 },
+        height: { ideal: 480 },
+      },
+    })
+  } catch (error) {
+    logDebug('camera-primary-failed', { error: error instanceof Error ? error.message : String(error), facingMode: currentFacingMode })
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: true,
+    })
+  }
   refs.video.srcObject = stream
   await refs.video.play()
 }
@@ -986,11 +998,20 @@ async function startGame() {
     resizeCanvases()
     resetRoundStats()
     resetObjects()
-    if (!stream) await setupCamera()
-    if (!handLandmarker) await setupHandTracking()
-    setRuntimeState('running')
-    updateStatus('把整只手放进画面里')
-    updateHint('移动到水果上，再重新握拳')
+
+    if (isDesktopMode()) {
+      logDebug('start-desktop-pointer-mode')
+      setRuntimeState('running')
+      updateStatus('点击水果就能抓爆')
+      updateHint('电脑端可直接鼠标点击水果')
+    } else {
+      if (!stream) await setupCamera()
+      if (!handLandmarker) await setupHandTracking()
+      setRuntimeState('running')
+      updateStatus('把整只手放进画面里')
+      updateHint('移动到水果上，再重新握拳')
+    }
+
     refs.panelAction.textContent = '开始游戏'
     refs.panelAction.disabled = false
   } catch (error) {
