@@ -225,6 +225,7 @@ let lockCharge = 0
 let lastCrushAt = -CRUSH_COOLDOWN_MS
 let fistReleasedSinceLastCrush = true
 let lastFistStartAt = -9999
+let pointerMode = !('ontouchstart' in window)
 
 const objects: Crushable[] = []
 const particles: Particle[] = []
@@ -256,6 +257,10 @@ function resizeCanvases() {
   refs.gameCanvas.width = width
   refs.gameCanvas.height = height
   threeScene.resize(width, height)
+}
+
+function logDebug(event: string, payload?: Record<string, unknown>) {
+  console.log('[fruit-crush]', event, payload ?? {})
 }
 
 function updateStatus(text: string) {
@@ -696,7 +701,11 @@ function updateTargetLock() {
       bestDist = dist
     }
   }
-  lockedTargetId = best?.id ?? null
+  const nextId = best?.id ?? null
+  if (nextId !== lockedTargetId) {
+    lockedTargetId = nextId
+    logDebug('lock-change', { lockedTargetId })
+  }
 }
 
 function updateLockCharge(dt: number) {
@@ -714,11 +723,21 @@ function updateLockCharge(dt: number) {
 function detectHit() {
   if (runtimeState !== 'running') return
   const locked = findLockedTarget()
-  if (!locked) return
+  if (!locked) {
+    logDebug('detect-hit-skip', { reason: 'no-locked-target' })
+    return
+  }
   const now = performance.now()
   const cooldownReady = now - lastCrushAt >= CRUSH_COOLDOWN_MS
   const fistIntentActive = justStartedFist || (now - lastFistStartAt <= config.fistIntentBufferMs)
   const canTriggerThisFist = fistIntentActive && fistReleasedSinceLastCrush && cooldownReady
+  logDebug('detect-hit', {
+    lockedTargetId: locked.id,
+    cooldownReady,
+    fistIntentActive,
+    canTriggerThisFist,
+    gestureState,
+  })
   if (canTriggerThisFist) {
     lastCrushAt = now
     fistReleasedSinceLastCrush = false
@@ -940,6 +959,22 @@ async function toggleFullscreen() {
   updateFullscreenLabel()
 }
 
+function tryPointerCrush(x: number, y: number) {
+  if (runtimeState !== 'running' || !pointerMode) return
+  let best: Crushable | undefined
+  let bestDist = Number.POSITIVE_INFINITY
+  for (const item of objects) {
+    if (item.crushed) continue
+    const dist = Math.hypot(item.screenX - x, item.screenY - y)
+    if (dist < bestDist && dist <= item.screenRadius + 20) {
+      best = item
+      bestDist = dist
+    }
+  }
+  logDebug('pointer-crush-attempt', { x, y, hit: best?.id ?? null, bestDist })
+  if (best) emitCrush(best)
+}
+
 async function startGame() {
   refs.panelAction.disabled = true
   refs.panelAction.textContent = '加载中...'
@@ -960,6 +995,7 @@ async function startGame() {
     refs.panelAction.disabled = false
   } catch (error) {
     console.error(error)
+    logDebug('start-failed', { error: error instanceof Error ? error.message : String(error) })
     refs.panelTitle.textContent = '启动失败'
     refs.panelAction.textContent = '重试'
     refs.panelAction.disabled = false
@@ -1050,6 +1086,10 @@ refs.switchCameraButton.addEventListener('click', () => {
 })
 refs.panelAction.addEventListener('click', () => {
   void startGame()
+})
+
+refs.overlayCanvas.addEventListener('pointerdown', (event) => {
+  tryPointerCrush(event.clientX, event.clientY)
 })
 
 if ('serviceWorker' in navigator) {
