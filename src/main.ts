@@ -972,18 +972,27 @@ async function toggleFullscreen() {
 }
 
 function tryPointerCrush(x: number, y: number) {
-  if (runtimeState !== 'running' || !pointerMode) return
+  if (runtimeState !== 'running' || !pointerMode) {
+    logDebug('pointer-crush-skip', { runtimeState, pointerMode })
+    return
+  }
   let best: Crushable | undefined
   let bestDist = Number.POSITIVE_INFINITY
   for (const item of objects) {
     if (item.crushed) continue
     const dist = Math.hypot(item.screenX - x, item.screenY - y)
-    if (dist < bestDist && dist <= item.screenRadius + 20) {
+    if (dist < bestDist && dist <= item.screenRadius + 40) {
       best = item
       bestDist = dist
     }
   }
-  logDebug('pointer-crush-attempt', { x, y, hit: best?.id ?? null, bestDist })
+  logDebug('pointer-crush-attempt', {
+    x,
+    y,
+    hit: best?.id ?? null,
+    bestDist,
+    activeObjects: objects.filter((item) => !item.crushed).map((item) => ({ id: item.id, x: item.screenX, y: item.screenY, r: item.screenRadius })),
+  })
   if (best) emitCrush(best)
 }
 
@@ -1110,7 +1119,13 @@ refs.panelAction.addEventListener('click', () => {
 })
 
 refs.overlayCanvas.addEventListener('pointerdown', (event) => {
+  logDebug('overlay-pointerdown', { x: event.clientX, y: event.clientY })
   tryPointerCrush(event.clientX, event.clientY)
+})
+
+window.addEventListener('pointerdown', (event) => {
+  if (!pointerMode || runtimeState !== 'running') return
+  logDebug('window-pointerdown', { x: event.clientX, y: event.clientY })
 })
 
 if ('serviceWorker' in navigator) {

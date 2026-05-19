@@ -57,7 +57,6 @@ export function createThreeFruitScene(canvas: HTMLCanvasElement): ThreeFruitScen
     }
     if (!texture) return
     texture.colorSpace = THREE.SRGBColorSpace
-    texture.needsUpdate = true
 
     const geometry = new THREE.PlaneGeometry(28, 20)
     const material = new THREE.MeshBasicMaterial({ map: texture, depthWrite: false })
@@ -90,7 +89,6 @@ export function createThreeFruitScene(canvas: HTMLCanvasElement): ThreeFruitScen
 
   function createFruit(texture: THREE.Texture, radius: number, juiceColor: number, variant: number): FruitVisual {
     texture.colorSpace = THREE.SRGBColorSpace
-    texture.needsUpdate = true
 
     const group = new THREE.Group()
     const body = createTexturedCard(texture, radius, variant)
