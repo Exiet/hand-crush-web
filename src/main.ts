@@ -237,9 +237,9 @@ const config = {
   minEnterFrames: 1,
   minExitFrames: 5,
   particleBurst: 50,
-  hitPadding: 96,
-  lockRadius: 138,
-  easyCrushBoost: 38,
+  hitPadding: 120,
+  lockRadius: 188,
+  easyCrushBoost: 52,
   chargeRate: 1.25,
   chargeBoostRate: 2.1,
   chargeDecay: 1.4,
@@ -346,10 +346,10 @@ function finishRound() {
 
 function getDeviceFruitScale() {
   const shortSide = Math.min(window.innerWidth, window.innerHeight)
-  if (shortSide <= 430) return 1
-  if (shortSide <= 540) return 1
-  if (shortSide <= 768) return 1
-  return 1
+  if (shortSide <= 430) return 0.62
+  if (shortSide <= 540) return 0.72
+  if (shortSide <= 768) return 0.82
+  return 0.9
 }
 
 function getWorldFromScreen(baseX: number, baseY: number, baseZ: number) {
@@ -370,7 +370,7 @@ function createFruitVisual(spriteIndex: number, radius: number) {
   const scale = getDeviceFruitScale()
   return threeScene.createFruit(
     fruitTextures[spriteIndex],
-    Math.max(1.36, radius * 0.192 * scale),
+    Math.max(0.56, radius * 0.08 * scale),
     JUICE_COLORS[spriteIndex % JUICE_COLORS.length],
     spriteIndex,
   )
@@ -382,11 +382,11 @@ function spawnObject(): Crushable {
   const hudTop = Math.min(window.innerHeight * 0.16, 122)
   const hudRight = Math.min(window.innerWidth * 0.14, 84)
   let attempts = 0
-  let radius = randomBetween(32, 42) * deviceScale
+  let radius = randomBetween(30, 38) * deviceScale
   let baseX = 0
   let baseY = 0
   do {
-    radius = randomBetween(32, 42) * deviceScale
+    radius = randomBetween(30, 38) * deviceScale
     baseX = randomBetween(margin, window.innerWidth - margin - hudRight)
     baseY = randomBetween(hudTop, window.innerHeight - margin - 94)
     attempts += 1
@@ -474,7 +474,7 @@ function syncObjectVisual(item: Crushable, now: number) {
   const screen = threeScene.projectToScreen(item.visual.group.position)
   item.screenX = screen.x
   item.screenY = screen.y
-  item.screenRadius = Math.max(84, item.radius * 3.4)
+  item.screenRadius = Math.max(52, item.radius * 1.42)
 }
 
 function updateObjectMotion(dt: number) {
@@ -884,10 +884,12 @@ function processDetection(result: HandLandmarkerResult | null) {
   const rawScore = computeFistScore(landmarks)
   fistScoreSmoothed = fistScoreSmoothed * (1 - config.smoothingAlpha) + rawScore * config.smoothingAlpha
   updateGestureState(fistScoreSmoothed)
-  if (lockedTargetId != null && justStartedFist) detectHit()
+  if (lockedTargetId != null && justStartedFist) {
+    detectHit()
+  }
   if (runtimeState === 'running') {
-    updateStatus(lockedTargetId != null ? '握拳抓爆！' : '移动到水果上')
-    updateHint(lockedTargetId != null ? '重新握拳马上触发' : '移动到水果上，再握拳')
+    updateStatus(lockedTargetId != null ? '已锁定，握拳就爆！' : '移动到水果上')
+    updateHint(lockedTargetId != null ? '重新握拳马上触发' : '把手移近水果一些')
   }
 }
 
