@@ -484,6 +484,15 @@ function syncObjectVisual(item: Crushable, now: number) {
   item.screenX = screen.x
   item.screenY = screen.y
   item.screenRadius = Math.max(52, item.radius * 1.42)
+  if (!Number.isFinite(item.screenX) || !Number.isFinite(item.screenY) || !Number.isFinite(item.screenRadius)) {
+    logDebug('invalid-screen-projection', {
+      id: item.id,
+      screenX: item.screenX,
+      screenY: item.screenY,
+      screenRadius: item.screenRadius,
+      world,
+    })
+  }
 }
 
 function updateObjectMotion(dt: number) {
@@ -976,24 +985,46 @@ function tryPointerCrush(x: number, y: number) {
     logDebug('pointer-crush-skip', { runtimeState, pointerMode })
     return
   }
-  let best: Crushable | undefined
-  let bestDist = Number.POSITIVE_INFINITY
-  for (const item of objects) {
-    if (item.crushed) continue
-    const dist = Math.hypot(item.screenX - x, item.screenY - y)
-    if (dist < bestDist && dist <= item.screenRadius + 40) {
-      best = item
-      bestDist = dist
-    }
+
+  const candidates = objects
+    .filter((item) => !item.crushed)
+    .map((item) => ({
+      item,
+      dist: Math.hypot(item.screenX - x, item.screenY - y),
+      x: item.screenX,
+      y: item.screenY,
+      r: item.screenRadius,
+      valid: Number.isFinite(item.screenX) && Number.isFinite(item.screenY) && Number.isFinite(item.screenRadius),
+    }))
+
+  let bestHit = candidates.find((entry) => entry.valid && entry.dist <= entry.r + 40)
+  const nearest = candidates.reduce<(typeof candidates)[number] | undefined>((acc, entry) => {
+    if (!entry.valid) return acc
+    if (!acc || entry.dist < acc.dist) return entry
+    return acc
+  }, undefined)
+
+  if (!bestHit && nearest) {
+    bestHit = nearest
+    logDebug('pointer-crush-fallback-nearest', { id: nearest.item.id, dist: nearest.dist })
   }
+
   logDebug('pointer-crush-attempt', {
     x,
     y,
-    hit: best?.id ?? null,
-    bestDist,
-    activeObjects: objects.filter((item) => !item.crushed).map((item) => ({ id: item.id, x: item.screenX, y: item.screenY, r: item.screenRadius })),
+    hit: bestHit?.item.id ?? null,
+    bestDist: bestHit?.dist ?? null,
+    candidates: candidates.map((entry) => ({
+      id: entry.item.id,
+      x: entry.x,
+      y: entry.y,
+      r: entry.r,
+      dist: entry.dist,
+      valid: entry.valid,
+    })),
   })
-  if (best) emitCrush(best)
+
+  if (bestHit) emitCrush(bestHit.item)
 }
 
 async function startGame() {
@@ -1012,7 +1043,7 @@ async function startGame() {
       logDebug('start-desktop-pointer-mode')
       setRuntimeState('running')
       updateStatus('点击水果就能抓爆')
-      updateHint('电脑端可直接鼠标点击水果')
+      updateHint('电脑端可直接鼠标点击任意水果')
     } else {
       if (!stream) await setupCamera()
       if (!handLandmarker) await setupHandTracking()
