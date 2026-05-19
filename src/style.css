@@ -97,10 +97,11 @@ video {
   top: max(10px, env(safe-area-inset-top));
   left: 50%;
   transform: translateX(-50%);
-  width: min(92vw, 560px);
+  width: min(94vw, 620px);
   flex-direction: row;
-  justify-content: center;
-  gap: 10px;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
 }
 
 .below-top-bar {
@@ -267,8 +268,14 @@ video {
 }
 
 .compact-top-card {
-  min-width: 94px;
-  flex: 1 1 0;
+  min-width: 92px;
+  padding: 8px 12px;
+  border-radius: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex: 0 0 auto;
 }
 
 .score-card strong {
@@ -284,14 +291,19 @@ video {
   color: rgba(255, 255, 255, 0.84);
 }
 
+.compact-top-card .score-label,
+.compact-top-card strong {
+  display: inline;
+}
+
 .debug-panel {
   display: none;
 }
 
 @media (max-width: 720px) {
   .top-bar-row {
-    width: min(94vw, 94vw);
-    gap: 8px;
+    width: min(96vw, 96vw);
+    gap: 6px;
   }
 
   .score-card {
@@ -301,6 +313,12 @@ video {
 
   .score-card strong {
     font-size: 21px;
+  }
+
+  .compact-top-card {
+    min-width: 80px;
+    padding: 7px 10px;
+    gap: 6px;
   }
 
   .hint {
