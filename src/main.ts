@@ -669,11 +669,16 @@ function createJuiceBurst(target: Crushable) {
 }
 
 function emitCrush(target: Crushable) {
-  if (runtimeState !== 'running') return
+  if (runtimeState !== 'running') {
+    logDebug('emit-crush-skip', { reason: 'runtime-not-running', runtimeState, targetId: target.id })
+    return
+  }
+  logDebug('emit-crush', { targetId: target.id, scoreBefore: crushCount, comboBefore: comboCount })
   target.crushed = true
   target.respawnAt = performance.now() + 420
   target.pulse = 1.3
   target.splitProgress = 0.01
+  target.y = -9999
   crushCount += 1
   comboCount = comboTimer > 0 ? comboCount + 1 : 1
   bestCombo = Math.max(bestCombo, comboCount)
@@ -686,6 +691,7 @@ function emitCrush(target: Crushable) {
   playCrushSound()
   triggerHaptics()
   createJuiceBurst(target)
+  logDebug('emit-crush-done', { targetId: target.id, scoreAfter: crushCount, comboAfter: comboCount })
 }
 
 function findLockedTarget(): Crushable | undefined {
@@ -1024,7 +1030,15 @@ function tryPointerCrush(x: number, y: number) {
     })),
   })
 
-  if (bestHit) emitCrush(bestHit.item)
+  if (bestHit) {
+    emitCrush(bestHit.item)
+    logDebug('pointer-crush-applied', {
+      targetId: bestHit.item.id,
+      crushed: bestHit.item.crushed,
+      respawnAt: bestHit.item.respawnAt,
+      score: crushCount,
+    })
+  }
 }
 
 async function startGame() {
