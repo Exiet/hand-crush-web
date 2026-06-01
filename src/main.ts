@@ -644,6 +644,23 @@ function triggerHaptics() {
   navigator.vibrate([14, 10, 18])
 }
 
+function getCanvasCssScale(canvas: HTMLCanvasElement) {
+  const rect = canvas.getBoundingClientRect()
+  return {
+    x: rect.width > 0 ? canvas.width / rect.width : 1,
+    y: rect.height > 0 ? canvas.height / rect.height : 1,
+  }
+}
+
+function clientToOverlayPoint(clientX: number, clientY: number) {
+  const rect = refs.overlayCanvas.getBoundingClientRect()
+  const scale = getCanvasCssScale(refs.overlayCanvas)
+  return {
+    x: (clientX - rect.left) * scale.x,
+    y: (clientY - rect.top) * scale.y,
+  }
+}
+
 function createJuiceBurst(target: Crushable) {
   const splashHue = [8, 18, 38, 102, 352][target.spriteIndex % 5] ?? randomBetween(0, 360)
   for (let i = 0; i < config.particleBurst; i += 1) {
@@ -686,7 +703,7 @@ function emitCrush(target: Crushable) {
   lockedTargetId = null
   lockCharge = 0
   updateScoreBoard()
-  flashTimer = 140
+  flashTimer = pointerMode ? 0 : 140
   shakeTimer = 120
   playCrushSound()
   triggerHaptics()
@@ -986,17 +1003,19 @@ async function toggleFullscreen() {
   updateFullscreenLabel()
 }
 
-function tryPointerCrush(x: number, y: number) {
+function tryPointerCrush(clientX: number, clientY: number) {
   if (runtimeState !== 'running' || !pointerMode) {
     logDebug('pointer-crush-skip', { runtimeState, pointerMode })
     return
   }
 
+  const point = clientToOverlayPoint(clientX, clientY)
+
   const candidates = objects
     .filter((item) => !item.crushed)
     .map((item) => ({
       item,
-      dist: Math.hypot(item.screenX - x, item.screenY - y),
+      dist: Math.hypot(item.screenX - point.x, item.screenY - point.y),
       x: item.screenX,
       y: item.screenY,
       r: item.screenRadius,
@@ -1016,8 +1035,10 @@ function tryPointerCrush(x: number, y: number) {
   }
 
   logDebug('pointer-crush-attempt', {
-    x,
-    y,
+    clientX,
+    clientY,
+    x: point.x,
+    y: point.y,
     hit: bestHit?.item.id ?? null,
     bestDist: bestHit?.dist ?? null,
     candidates: candidates.map((entry) => ({
@@ -1165,6 +1186,8 @@ refs.panelAction.addEventListener('click', () => {
 
 refs.overlayCanvas.addEventListener('pointerdown', (event) => {
   logDebug('overlay-pointerdown', { x: event.clientX, y: event.clientY })
+  event.preventDefault()
+  event.stopPropagation()
   tryPointerCrush(event.clientX, event.clientY)
 })
 
