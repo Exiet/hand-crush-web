@@ -65,12 +65,9 @@ export function createThreeFruitScene(canvas: HTMLCanvasElement): ThreeFruitScen
     scene.add(backgroundMesh)
   }
 
-  function getFruitScale(variant: number) {
-    if (variant === 0) return { w: 1.06, h: 1.02 }
-    if (variant === 1) return { w: 0.92, h: 1.16 }
-    if (variant === 2) return { w: 1.2, h: 0.88 }
-    if (variant === 3) return { w: 0.72, h: 1.38 }
-    return { w: 1.18, h: 0.98 }
+  function getFruitScale(_variant: number) {
+    // 等比缩放：直接使用贴图原始比例，避免把草莓/西红柿压扁或拉伸
+    return { w: 1, h: 1 }
   }
 
   function createTexturedCard(texture: THREE.Texture, radius: number, variant: number) {

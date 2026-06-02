@@ -38,13 +38,14 @@ type Crushable = {
   screenX: number
   screenY: number
   screenRadius: number
+  worldRadius: number
   splitProgress: number
   splitDirX: number
   splitDirY: number
   visual: FruitVisual | null
 }
 
-type ParticleKind = 'juice' | 'pulp' | 'screen'
+// 全新汁液飞溅粒子：圆形液滴，从命中点放射散开，不再聚成一块。
 type Particle = {
   x: number
   y: number
@@ -53,13 +54,8 @@ type Particle = {
   life: number
   maxLife: number
   size: number
-  hue: number
-  alpha: number
-  kind: ParticleKind
-  stretch: number
+  color: string
   gravity: number
-  spin: number
-  rotation: number
 }
 
 type AppRefs = {
@@ -229,6 +225,7 @@ let pointerMode = !('ontouchstart' in window)
 
 const objects: Crushable[] = []
 const particles: Particle[] = []
+const projectionScratch = new THREE.Vector3()
 
 const config = {
   smoothingAlpha: 0.8,
@@ -375,11 +372,16 @@ function isValidSpawn(baseX: number, baseY: number, radius: number) {
   })
 }
 
-function createFruitVisual(spriteIndex: number, radius: number) {
+// 水果世界半径（用于创建与命中投影）。较之前缩小一倍。
+function getFruitWorldRadius(radius: number) {
   const scale = getDeviceFruitScale()
+  return Math.max(0.28, radius * 0.04 * scale)
+}
+
+function createFruitVisual(spriteIndex: number, radius: number) {
   return threeScene.createFruit(
     fruitTextures[spriteIndex],
-    Math.max(0.56, radius * 0.08 * scale),
+    getFruitWorldRadius(radius),
     JUICE_COLORS[spriteIndex % JUICE_COLORS.length],
     spriteIndex,
   )
@@ -430,6 +432,7 @@ function spawnObject(): Crushable {
     screenX: baseX,
     screenY: baseY,
     screenRadius: Math.max(34, radius),
+    worldRadius: getFruitWorldRadius(radius),
     splitProgress: 0,
     splitDirX: 1,
     splitDirY: 1,
@@ -464,9 +467,9 @@ function syncObjectVisual(item: Crushable, now: number) {
   const world = getWorldFromScreen(item.x, item.y, item.z)
   item.visual.group.position.set(world.x, world.y, world.z)
   item.visual.group.rotation.set(item.tilt * 0.2, item.yaw * 0.15, item.roll * 0.14)
+  // 等比缩放：只用单一 burst 因子同时作用于 x/y，避免压扁
   const burst = item.crushed ? 1 + item.splitProgress * 0.12 : 1 + item.pulse * 0.08
-  const squashY = item.crushed ? 1 - item.splitProgress * 0.18 : 1
-  item.visual.group.scale.set(burst, squashY, 1)
+  item.visual.group.scale.set(burst, burst, 1)
   item.visual.body.visible = true
   item.visual.shell.visible = true
   item.visual.leftHalf.visible = false
@@ -480,10 +483,16 @@ function syncObjectVisual(item: Crushable, now: number) {
   item.visual.body.position.set(0, item.crushed ? item.splitProgress * 0.08 : 0, 0.04)
   item.visual.shell.position.set(0, item.crushed ? item.splitProgress * 0.08 : 0, -0.02)
 
-  const screen = threeScene.projectToScreen(item.visual.group.position)
+  const center = item.visual.group.position
+  const screen = threeScene.projectToScreen(center)
   item.screenX = screen.x
   item.screenY = screen.y
-  item.screenRadius = Math.max(52, item.radius * 1.42)
+  // 命中半径：由真实世界半径投影到屏幕计算，与看到的大小一致
+  const edge = projectionScratch.copy(center)
+  edge.x += item.worldRadius * burst
+  const edgeScreen = threeScene.projectToScreen(edge)
+  const pixelRadius = Math.hypot(edgeScreen.x - screen.x, edgeScreen.y - screen.y)
+  item.screenRadius = Number.isFinite(pixelRadius) && pixelRadius > 0 ? pixelRadius : 0
   if (!Number.isFinite(item.screenX) || !Number.isFinite(item.screenY) || !Number.isFinite(item.screenRadius)) {
     logDebug('invalid-screen-projection', {
       id: item.id,
@@ -661,26 +670,37 @@ function clientToOverlayPoint(clientX: number, clientY: number) {
   }
 }
 
+function hexToRgb(hex: number) {
+  return { r: (hex >> 16) & 255, g: (hex >> 8) & 255, b: hex & 255 }
+}
+
 function createJuiceBurst(target: Crushable) {
-  const splashHue = [8, 18, 38, 102, 352][target.spriteIndex % 5] ?? randomBetween(0, 360)
+  // 从水果当前屏幕位置放射散开。颜色取该水果的果汁色。
+  const cx = target.screenX
+  const cy = target.screenY
+  if (!Number.isFinite(cx) || !Number.isFinite(cy)) return
+  const base = hexToRgb(JUICE_COLORS[target.spriteIndex % JUICE_COLORS.length])
+  const sizeScale = clamp(target.screenRadius / 48, 0.6, 1.6)
   for (let i = 0; i < config.particleBurst; i += 1) {
-    const angle = randomBetween(-Math.PI * 0.95, Math.PI * 0.95)
-    const speed = randomBetween(140, 420)
+    // 均匀分布在整个圆周上 + 随机抖动，避免集中在一侧
+    const angle = (i / config.particleBurst) * Math.PI * 2 + randomBetween(-0.25, 0.25)
+    const speed = randomBetween(120, 360) * sizeScale
+    const life = randomBetween(0.45, 0.85)
+    // 颜色轻微深浅抖动
+    const shade = randomBetween(0.78, 1.12)
+    const r = clamp(Math.round(base.r * shade), 0, 255)
+    const g = clamp(Math.round(base.g * shade), 0, 255)
+    const b = clamp(Math.round(base.b * shade), 0, 255)
     particles.push({
-      x: target.screenX,
-      y: target.screenY,
+      x: cx,
+      y: cy,
       vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed - randomBetween(20, 140),
-      life: randomBetween(0.32, 0.74),
-      maxLife: randomBetween(0.32, 0.74),
-      size: randomBetween(6, 22),
-      hue: splashHue + randomBetween(-16, 16),
-      alpha: randomBetween(0.45, 0.95),
-      kind: i % 4 === 0 ? 'pulp' : 'juice',
-      stretch: randomBetween(0.8, 2.8),
-      gravity: randomBetween(520, 880),
-      spin: randomBetween(-6, 6),
-      rotation: randomBetween(0, Math.PI * 2),
+      vy: Math.sin(angle) * speed - randomBetween(40, 120),
+      life,
+      maxLife: life,
+      size: randomBetween(3, 9) * sizeScale,
+      color: `${r},${g},${b}`,
+      gravity: randomBetween(700, 1050),
     })
   }
 }
@@ -885,18 +905,15 @@ function drawParticles(dt: number) {
     }
     particle.x += particle.vx * dt
     particle.y += particle.vy * dt
-    particle.vx *= particle.kind === 'screen' ? 0.99 : 0.975
-    particle.vy = particle.vy * 0.98 + particle.gravity * dt
-    particle.rotation += particle.spin * dt
-    const alpha = (particle.life / particle.maxLife) * particle.alpha
-    overlayCtx.save()
-    overlayCtx.translate(particle.x, particle.y)
-    overlayCtx.rotate(particle.rotation)
-    overlayCtx.fillStyle = `hsla(${particle.hue} 92% 58% / ${alpha})`
+    particle.vx *= 0.96
+    particle.vy = particle.vy * 0.96 + particle.gravity * dt
+    const t = particle.life / particle.maxLife
+    const alpha = Math.min(1, t * 1.2)
+    const radius = particle.size * (0.4 + 0.6 * t)
     overlayCtx.beginPath()
-    overlayCtx.ellipse(0, 0, particle.size * particle.stretch, particle.size * 0.58, 0, 0, Math.PI * 2)
+    overlayCtx.fillStyle = `rgba(${particle.color},${alpha.toFixed(3)})`
+    overlayCtx.arc(particle.x, particle.y, radius, 0, Math.PI * 2)
     overlayCtx.fill()
-    overlayCtx.restore()
   }
 }
 
@@ -1011,27 +1028,19 @@ function tryPointerCrush(clientX: number, clientY: number) {
 
   const point = clientToOverlayPoint(clientX, clientY)
 
-  const candidates = objects
-    .filter((item) => !item.crushed)
-    .map((item) => ({
-      item,
-      dist: Math.hypot(item.screenX - point.x, item.screenY - point.y),
-      x: item.screenX,
-      y: item.screenY,
-      r: item.screenRadius,
-      valid: Number.isFinite(item.screenX) && Number.isFinite(item.screenY) && Number.isFinite(item.screenRadius),
-    }))
-
-  let bestHit = candidates.find((entry) => entry.valid && entry.dist <= entry.r + 40)
-  const nearest = candidates.reduce<(typeof candidates)[number] | undefined>((acc, entry) => {
-    if (!entry.valid) return acc
-    if (!acc || entry.dist < acc.dist) return entry
-    return acc
-  }, undefined)
-
-  if (!bestHit && nearest) {
-    bestHit = nearest
-    logDebug('pointer-crush-fallback-nearest', { id: nearest.item.id, dist: nearest.dist })
+  // 只取真正被点中（点击在水果命中半径内）的目标；若多个重叠，取最近中心。
+  // 不再 fallback 到「最近的水果」，避免点空白区域也爆炸。
+  const HIT_TOLERANCE = 6 // 像素，轻微容错，不能太大
+  let bestHit: Crushable | undefined
+  let bestDist = Number.POSITIVE_INFINITY
+  for (const item of objects) {
+    if (item.crushed) continue
+    if (!Number.isFinite(item.screenX) || !Number.isFinite(item.screenY) || !(item.screenRadius > 0)) continue
+    const dist = Math.hypot(item.screenX - point.x, item.screenY - point.y)
+    if (dist <= item.screenRadius + HIT_TOLERANCE && dist < bestDist) {
+      bestHit = item
+      bestDist = dist
+    }
   }
 
   logDebug('pointer-crush-attempt', {
@@ -1039,27 +1048,22 @@ function tryPointerCrush(clientX: number, clientY: number) {
     clientY,
     x: point.x,
     y: point.y,
-    hit: bestHit?.item.id ?? null,
-    bestDist: bestHit?.dist ?? null,
-    candidates: candidates.map((entry) => ({
-      id: entry.item.id,
-      x: entry.x,
-      y: entry.y,
-      r: entry.r,
-      dist: entry.dist,
-      valid: entry.valid,
-    })),
+    hit: bestHit?.id ?? null,
+    bestDist: Number.isFinite(bestDist) ? bestDist : null,
   })
 
-  if (bestHit) {
-    emitCrush(bestHit.item)
-    logDebug('pointer-crush-applied', {
-      targetId: bestHit.item.id,
-      crushed: bestHit.item.crushed,
-      respawnAt: bestHit.item.respawnAt,
-      score: crushCount,
-    })
+  if (!bestHit) {
+    logDebug('pointer-crush-miss', { x: point.x, y: point.y })
+    return
   }
+
+  emitCrush(bestHit)
+  logDebug('pointer-crush-applied', {
+    targetId: bestHit.id,
+    crushed: bestHit.crushed,
+    respawnAt: bestHit.respawnAt,
+    score: crushCount,
+  })
 }
 
 async function startGame() {
